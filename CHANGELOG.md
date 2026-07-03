@@ -4,6 +4,12 @@ All notable changes to the glassbox CAR-bench agent.
 
 ## [Unreleased]
 
+### Changed
+- `MAX_PLAN_ROUNDS` 8 → 16 (ADR-0003): train tasks have up to 9 GT actions in
+  all three splits; bound is a last-resort loop stop, not a task-size budget.
+  New `TurnContext.plan_bound_hit` flag + agent-layer warning instrument any
+  cut-off for dev runs.
+
 ### Added
 - Stufe 2 — Zustandsmaschine vollständig (ADR-0002):
   - `state_machine.py`: resumable `run_turn()`/`resume()` returning actions
