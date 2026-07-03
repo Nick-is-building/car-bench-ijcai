@@ -1,5 +1,6 @@
 """Server entry point for CAR-bench agent under test."""
 import argparse
+import os
 import sys
 from pathlib import Path
 import warnings
@@ -26,6 +27,10 @@ from car_bench_agent import CARBenchAgentExecutor
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logging_utils import configure_logger
 sys.path.pop(0)
+
+# AGENT_CLASS=glassbox activates the deterministic shell (Stufen 1-7)
+# Default is the baseline LiteLLM agent
+_AGENT_CLASS = os.getenv("AGENT_CLASS", "baseline")
 
 logger = configure_logger(role="agent_under_test", context="server")
 
@@ -102,14 +107,22 @@ def main():
 
     card = prepare_agent_card(args.card_url or f"http://{args.host}:{args.port}/")
 
-    request_handler = DefaultRequestHandler(
-        agent_executor=CARBenchAgentExecutor(
+    if _AGENT_CLASS == "glassbox":
+        from glassbox_agent import GlassboxAgentExecutor
+        executor = GlassboxAgentExecutor(model=agent_llm, temperature=completion_kwargs["temperature"] or 0.0)
+        logger.info("Using GlassboxAgentExecutor (deterministic shell)")
+    else:
+        executor = CARBenchAgentExecutor(
             model=agent_llm,
             temperature=completion_kwargs["temperature"],
             thinking=completion_kwargs["thinking"],
             reasoning_effort=completion_kwargs["reasoning_effort"],
-            interleaved_thinking=completion_kwargs["interleaved_thinking"]
-            ),
+            interleaved_thinking=completion_kwargs["interleaved_thinking"],
+        )
+        logger.info("Using CARBenchAgentExecutor (baseline)")
+
+    request_handler = DefaultRequestHandler(
+        agent_executor=executor,
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
