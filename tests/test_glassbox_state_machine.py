@@ -185,9 +185,37 @@ class IdempotencyTest(unittest.TestCase):
                  for i in range(sm.MAX_PLAN_ROUNDS + 5)]
         fake = FakeLLM(intents=[intent_ok()], plans=plans,
                        drafts=[Draft(response="Stopped.")])
-        _, trajectory, action = run_scripted(fake)
+        ctx, trajectory, action = run_scripted(fake)
         self.assertEqual(len(trajectory), sm.MAX_PLAN_ROUNDS)
         self.assertIsInstance(action, EmitText)
+        # cut-off must be flagged so dev runs surface it (ADR-0003)
+        self.assertTrue(ctx.plan_bound_hit)
+
+    def test_bound_not_flagged_on_normal_completion(self):
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(steps=[step("get_weather", {"location": "current"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[Draft(response="Done.")],
+        )
+        ctx, _, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertFalse(ctx.plan_bound_hit)
+
+    def test_bound_allows_nine_sequential_actions(self):
+        # CAR-bench train tasks have up to 9 GT actions (ADR-0003); a fully
+        # sequential 9-action turn plus a done-round must fit under the bound
+        plans = [Plan(steps=[step("open_close_sunroof", {"position": f"{i*10}"})])
+                 for i in range(9)]
+        plans.append(Plan(steps=[], done_reason="all nine done"))
+        fake = FakeLLM(intents=[intent_ok()], plans=plans,
+                       drafts=[Draft(response="All done.")])
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertEqual(len(trajectory), 9)
+        self.assertIsInstance(action, EmitText)
+        self.assertFalse(ctx.plan_bound_hit)
 
 
 class SafetyPathTest(unittest.TestCase):

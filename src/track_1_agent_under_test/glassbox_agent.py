@@ -132,6 +132,13 @@ class GlassboxAgentExecutor(AgentExecutor):
         else:
             parts = [new_text_part(action.text)]
             self._active_turns.pop(ctx_id, None)
+            if turn_ctx is not None and turn_ctx.plan_bound_hit:
+                # possible task cut-off — see ADR-0003; must never fire on
+                # well-formed tasks, investigate any occurrence in dev runs
+                ctx_log.warning(
+                    "MAX_PLAN_ROUNDS ended the turn before the planner confirmed completion",
+                    plan_rounds=turn_ctx.plan_round,
+                )
             ctx_log.info(
                 "Turn complete",
                 response_preview=action.text[:100],

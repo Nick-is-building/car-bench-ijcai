@@ -40,10 +40,14 @@ class State(Enum):
     DONE = auto()
 
 
-# Upper bound for PLAN→EXECUTE rounds per user turn. A well-formed task never
-# needs more than a handful of sequential dependency hops; the bound only
-# stops planner loops deterministically.
-MAX_PLAN_ROUNDS = 8
+# Upper bound for PLAN→EXECUTE rounds per user turn — last-resort loop stop,
+# NOT a task-size budget. Published train tasks have up to 9 ground-truth
+# actions (verified across all three splits, see ADR-0003), and read calls
+# (get_weather, get_*_state) consume rounds on top of that, so the bound must
+# sit well above 9+reads. Real planner loops are caught earlier by the
+# duplicate-signature detection. TurnContext.plan_bound_hit flags if this
+# bound ever binds so dev runs surface it.
+MAX_PLAN_ROUNDS = 16
 
 # Deterministic fallback texts (used only while later Stufen are stubs, or as
 # last-resort safety). Honest, no fabricated alternatives.
@@ -100,6 +104,9 @@ class TurnContext:
     policy_violations: list = field(default_factory=list)
     clarification_question: str = ""
     final_response: str = ""
+    # true if MAX_PLAN_ROUNDS ended the turn before the planner confirmed
+    # completion (empty plan) — a possible task cut-off, must be investigated
+    plan_bound_hit: bool = False
     # state trace for tests/debugging — appended on every transition
     state_trace: list[str] = field(default_factory=list)
 
@@ -152,7 +159,10 @@ class StateMachine:
     def _plan_execute_loop(self, ctx: TurnContext, matcher) -> Action:
         from . import prompts
 
-        while ctx.plan_round < MAX_PLAN_ROUNDS:
+        while True:
+            if ctx.plan_round >= MAX_PLAN_ROUNDS:
+                ctx.plan_bound_hit = True
+                break
             ctx.plan_round += 1
             ctx.transition(State.PLAN)
             steps = prompts.plan.build_plan(ctx)
