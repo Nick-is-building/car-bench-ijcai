@@ -98,6 +98,7 @@ class TurnContext:
 
     intent: dict = field(default_factory=dict)
     capability_result: str = ""          # "covered" | "uncovered" | "ambiguous"
+    capability_missing: bool = False     # set by planner when required tool is absent
     plan_round: int = 0
     pending_calls: list[PlannedCall] = field(default_factory=list)
     executed_signatures: set[str] = field(default_factory=set)
@@ -133,7 +134,6 @@ class StateMachine:
         ctx.transition(State.CAPABILITY_CHECK)
         matcher = CapabilityMatcher(ctx.tools)
         ctx.capability_result = self._capability_check(matcher, ctx)
-
         if ctx.capability_result == "uncovered":
             return self._respond_refusal(ctx)
 
@@ -167,6 +167,8 @@ class StateMachine:
             ctx.transition(State.PLAN)
             steps = prompts.plan.build_plan(ctx)
             if not steps:
+                if ctx.capability_missing:
+                    return self._respond_refusal(ctx)
                 break
 
             calls: list[PlannedCall] = []
@@ -194,6 +196,20 @@ class StateMachine:
                     return self._respond_refusal(ctx)
                 # everything was a duplicate → planner is looping; stop
                 break
+
+            # AUT-POL:005 deterministic guard (Stufe 3):
+            # Sunroof cannot be opened unless sunshade control is available.
+            # Catches hallucination tasks where open_close_sunshade is removed.
+            if any(c.tool == "open_close_sunroof" for c in calls):
+                sunshade_available = matcher.index.has_tool("open_close_sunshade")
+                sunshade_in_batch = any(c.tool == "open_close_sunshade" for c in calls)
+                sunshade_executed = any(
+                    sig.startswith("open_close_sunshade:")
+                    for sig in ctx.executed_signatures
+                )
+                if not sunshade_available and not sunshade_in_batch and not sunshade_executed:
+                    ctx.capability_missing = True
+                    return self._respond_refusal(ctx)
 
             ctx.transition(State.POLICY_CHECK)
             violations = self._policy_pre_flight(ctx, calls)

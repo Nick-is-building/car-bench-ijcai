@@ -26,12 +26,11 @@ def finalize(sanitized_draft: str, ctx: "TurnContext") -> str:  # type: ignore[n
 
 
 def generate_honest_refusal(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
-    """
-    Generate natural honest refusal (called when capability is uncovered).
-
-    Stufe 3 implementation point.
-    """
-    raise NotImplementedError("respond.generate_honest_refusal — implement in Stufe 3")
+    """Generate natural honest refusal when capability is uncovered (Stufe 3)."""
+    from . import capability_check
+    return capability_check.generate_honest_refusal(
+        ctx.capability_result, ctx.intent, ctx.model
+    )
 
 
 def generate_policy_block(ctx: "TurnContext") -> str:  # type: ignore[name-defined]

@@ -67,19 +67,52 @@ class CapabilityMatcher:
 
     def check(self, intent: dict) -> CapabilityResult:
         """
-        Stufe 3 implementation point.
+        Deterministic capability check (Stufe 3).
 
         intent keys (from prompts.intake.Intent):
-          - required_tools: list[str]   tools the plan would need
-          - required_params: list[{tool: str, params: list[str]}]
+          - required_tools: list[str]            tools the plan will use
+          - required_params: list[{tool, params}] params the request constrains
+          - required_but_missing_tools: list[str] tools needed but absent from catalog
           - is_ambiguous: bool
 
         Returns:
           "covered"   — all required tools + params exist in index
-          "uncovered" — at least one required tool or param is missing
+          "uncovered" — at least one required tool/param is missing
           "ambiguous" — intent is ambiguous and needs clarification first
         """
-        raise NotImplementedError("CapabilityMatcher.check — implement in Stufe 3")
+        if intent.get("is_ambiguous"):
+            return "ambiguous"
+
+        # Tools the LLM detected as needed but absent from catalog.
+        # Cross-validate deterministically: only count tools that are genuinely
+        # not in the index (LLMs can over-report; the index is ground truth).
+        actually_missing = [
+            t for t in intent.get("required_but_missing_tools", [])
+            if not self.index.has_tool(t)
+        ]
+        if actually_missing:
+            return "uncovered"
+
+        # Tools the plan will actively call — must all be in the index
+        for tool_name in intent.get("required_tools", []):
+            if not self.index.has_tool(tool_name):
+                return "uncovered"
+
+        # Parameters the request constrains — must all be present in schema
+        for tp in intent.get("required_params", []):
+            if isinstance(tp, dict):
+                tool_name = tp.get("tool", "")
+                params = tp.get("params", [])
+            else:
+                tool_name = tp.tool
+                params = tp.params
+            for param in params:
+                # Defensive: LLMs sometimes output "name=value" — strip the value part
+                param_name = param.split("=")[0].strip()
+                if not self.index.has_parameter(tool_name, param_name):
+                    return "uncovered"
+
+        return "covered"
 
     def check_step(self, tool_name: str, arguments: dict) -> CapabilityResult:
         """Per-step check during EXECUTE — catches mid-conversation capability removal."""

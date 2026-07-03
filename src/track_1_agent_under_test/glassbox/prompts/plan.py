@@ -38,6 +38,7 @@ class Plan(BaseModel):
     reasoning: str = ""
     steps: list[PlanStep] = Field(default_factory=list)
     done_reason: str = ""  # why no further steps are needed (when steps is empty)
+    capability_missing: bool = False  # True when a required tool is absent from schemas
 
 
 _PLAN_SYSTEM = """\
@@ -59,7 +60,17 @@ this turn's executed calls.
 - Prefer the minimum number of calls necessary. Read state before changing it \
 only when the correct target value depends on the current state.
 - If the request is fully handled (or needs no tools at all), return an empty \
-steps list and state why in done_reason.
+steps list and state why in done_reason. "Fully handled" means ALL state \
+changes the user requested have been executed in this turn (confirmed by \
+tool call entries in the conversation). Never declare done after only \
+state-reading calls (get_* tools) while the requested state changes \
+(open_*, set_*, close_*, etc.) have not been executed yet.
+- CRITICAL — missing capability: if completing the request requires a tool or \
+prerequisite step that is NOT in the provided tool schemas, do NOT improvise a \
+workaround. Set capability_missing=true, return steps=[], and explain in \
+done_reason. A workaround that skips a required step is a fabrication. This \
+includes prerequisite steps: if opening the sunroof requires opening the sunshade \
+first but open_close_sunshade is absent from schemas, set capability_missing=true.
 """
 
 
@@ -86,6 +97,8 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
         ),
     }]
     result = llm.call_structured(messages, Plan, model=ctx.model, system=system)
+    if result.capability_missing:
+        ctx.capability_missing = True
     return [
         {"tool": s.tool, "arguments": s.arguments, "rationale": s.rationale}
         for s in result.steps

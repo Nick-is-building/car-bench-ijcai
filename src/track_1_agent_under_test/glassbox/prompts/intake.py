@@ -16,6 +16,7 @@ class Intent(BaseModel):
     user_request_summary: str
     required_tools: list[str] = Field(default_factory=list)
     required_params: list[ToolParams] = Field(default_factory=list)
+    required_but_missing_tools: list[str] = Field(default_factory=list)
     is_state_changing: bool
     is_ambiguous: bool
     ambiguity_reason: str = ""
@@ -29,10 +30,19 @@ for the LAST user message.
 
 Rules:
 - user_request_summary: one sentence, what the user wants now.
-- required_tools: only tools from the catalog you are CERTAIN the request needs. \
-If the needed capability is not in the catalog, leave the list empty rather than \
-naming a similar-sounding tool.
-- required_params: for each required tool, the parameters the request constrains.
+- required_tools: tools from the catalog that fulfilling this request will definitely \
+call. Only list tools that ARE in the catalog.
+- required_params: for each required tool, list ONLY parameter names whose values the \
+user EXPLICITLY stated in their request (e.g. user said "50%" → list "percentage" for \
+open_close_sunroof). Do NOT list parameters whose values the agent derives from vehicle \
+context (current location, current time, car state, etc.). Use the exact parameter name \
+as it appears in the tool schema. Never list "percentage=50" — list only "percentage". \
+Leave empty for tools that get all their inputs from context, not from the user's message.
+- required_but_missing_tools: tools or capabilities the request NEEDS but that are \
+NOT present in the catalog (e.g. a prerequisite step whose tool is absent). \
+If you know from context or semantics that a step would normally be required \
+(e.g. opening the sunshade before the sunroof) but the tool for that step is not in \
+the catalog, list the missing tool name here. Leave empty if nothing is missing.
 - is_state_changing: true if fulfilling the request changes vehicle/world state.
 - is_ambiguous: true ONLY if the request cannot be acted on without more \
 information AND the conversation does not already contain that information. \
