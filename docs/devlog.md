@@ -20,6 +20,32 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-03 — Erster Smoke-Test mit echtem Modell (Infrastruktur-Abnahme Stufe 2)
+
+**Zweck:** Infrastruktur-Verifikation — kein Forschungsexperiment, daher abweichend von der
+Präregistrierungsregel (kein messbarer Hypothesentest, nur Pipeline-Aufbringen). Ergebnis-Commit
+und Docs in einem Block.
+
+**Lauf:** `local_smoke_glassbox.toml`, 1 Trial je Split (base/hallucination/disambiguation),
+Modell `anthropic/claude-sonnet-4-6`, Judge/User-Sim `gemini-2.5-flash`.
+
+**Ergebnis:** Pass^1 = 33,3 % (1 Trial, 1/3 Tasks). Base 100 % ✓, Hallucination 0 % ✗,
+Disambiguation 0 % ✗. Kein Pass^3 — 1-Trial-Zahlen nie mit Wettbewerbsmetriken vergleichen.
+Details und Fehlertaxonomie → `docs/experiments/2026-07-03-smoke-glassbox.md`.
+
+**Befund:**
+- Stufe-2-Pipeline läuft end-to-end mit echtem API: Agent-Server, Evaluator-Server, A2A,
+  Anthropic-LLM-Call, Gemini-User-Sim/Judge — alles aufgebracht.
+- Hallucination-Fehler: Stufe 3 (CapabilityMatcher) ist Stub — Agent ruft entferntes Tool auf.
+- Disambiguation-Fehler: Stufe 6 (DisambiguationEngine) ist Stub — keine Rückfrage, kein Handeln.
+- Nebenfix: `AGENT_CLASS=glassbox` aus TOML-`cmd` in Elternprozess-Umgebung verschoben
+  (subprocess.Popen interpretiert Env-Var-Prefix sonst als Binary-Namen).
+
+**Nächste Schritte:** Stufe 3 implementieren (CapabilityMatcher.check + PromptCapabilityCheck +
+respond.generate_honest_refusal). Danach Smoke-Test wiederholen — Hallucination sollte steigen.
+
+---
+
 ## 2026-07-03 — Stufe 2: Zustandsmaschine implementiert
 
 **Aktion:** Resumierbare Zustandsmaschine + Prompt-Module INTAKE/PLAN/VERIFY fertiggestellt (Details: ADR-0002).

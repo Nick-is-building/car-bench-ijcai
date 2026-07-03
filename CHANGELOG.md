@@ -4,6 +4,18 @@ All notable changes to the glassbox CAR-bench agent.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-03
+
+### Fixed
+- `scenarios/track_1_agent_under_test/local_smoke_glassbox.toml`: removed `AGENT_CLASS=glassbox`
+  from `cmd` field — `subprocess.Popen` without `shell=True` treats env-var prefixes as the
+  executable name; variable is now passed via the parent process environment instead.
+
+### Added
+- `docs/experiments/2026-07-03-smoke-glassbox.md` — first successful end-to-end smoke run:
+  Pass^1 33.3 % (base 100 %, hallucination 0 %, disambiguation 0 %); confirms Stufe-2 pipeline
+  runs with real APIs; Stufe-3/6 stubs are next.
+
 ### Changed
 - `MAX_PLAN_ROUNDS` 8 → 16 (ADR-0003): train tasks have up to 9 GT actions in
   all three splits; bound is a last-resort loop stop, not a task-size budget.
