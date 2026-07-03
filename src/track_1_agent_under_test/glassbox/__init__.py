@@ -11,7 +11,9 @@ Build order (see Bauplan Stufen 1–7):
   7. Auditor      — targeted self-check at two points
 """
 from .ledger import Ledger, LedgerEntry
-from .state_machine import StateMachine, State, TurnContext
+from .state_machine import (
+    Action, EmitText, EmitToolCalls, PlannedCall, State, StateMachine, TurnContext,
+)
 from .capability import CapabilityMatcher, CapabilityIndex
 from .policies import PolicyChecker, PolicyViolation, ALL_POLICIES
 from .guard import FabricationGuard
@@ -21,6 +23,7 @@ from .auditor import Auditor, AuditResult
 __all__ = [
     "Ledger", "LedgerEntry",
     "StateMachine", "State", "TurnContext",
+    "Action", "EmitText", "EmitToolCalls", "PlannedCall",
     "CapabilityMatcher", "CapabilityIndex",
     "PolicyChecker", "PolicyViolation", "ALL_POLICIES",
     "FabricationGuard",

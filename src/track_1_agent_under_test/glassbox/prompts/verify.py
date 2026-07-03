@@ -1,23 +1,51 @@
-"""VERIFY state — draft response from tool results before guard sanitizes it."""
+"""VERIFY state — draft response from ledger facts before the guard sanitizes it.
+
+Stufe 2 provides the functional draft call (needed for a runnable turn);
+Stufe 5 adds the FabricationGuard claim-check on top of this draft.
+"""
 from __future__ import annotations
+
+from pydantic import BaseModel
+
+from .. import llm
+from . import common
+
+
+class Draft(BaseModel):
+    response: str
 
 
 _DRAFT_SYSTEM = """\
-You are an in-car voice assistant summarizing what was just done.
-Draft a response based ONLY on tool results that are explicitly provided.
-Do NOT invent values, states, or confirmations not present in the results.
-Do NOT include markdown, lists, or non-speakable characters.
+You are an in-car voice assistant reporting back to the driver.
+Personality: joyful, enthusiastic, informal, concise.
+
+Hard rules:
+- State ONLY facts that appear in the conversation or in the tool results \
+shown. Never invent values, states, or confirmations.
+- If a tool result reports an error or a request could not be completed, say \
+so honestly. Do not claim success.
+- Do not perform your own arithmetic; only repeat numbers that appear in the \
+tool results or the conversation.
+- No markdown, no lists, no non-speakable characters. Metric units (km, m, \
+degrees Celsius) and 24h time.
+- 1-2 short sentences for confirmations; only as long as needed otherwise.
 """
 
 
 def draft_response(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
-    """
-    Draft a response from the ledger's tool results.
-    The FabricationGuard will sanitize this draft next.
-
-    Stufe 5 implementation point.
-    """
-    raise NotImplementedError("verify.draft_response — implement in Stufe 5")
+    """Draft the turn's response from the ledger (LLM, temp 0)."""
+    system = _DRAFT_SYSTEM + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
+    transcript = common.render_transcript(ctx.ledger, include_tools=True)
+    messages = [{
+        "role": "user",
+        "content": (
+            f"# Conversation (tool calls/results included)\n{transcript}\n\n"
+            "Write the assistant's spoken reply to the last user message, "
+            "based strictly on the facts above."
+        ),
+    }]
+    draft = llm.call_structured(messages, Draft, model=ctx.model, system=system)
+    return draft.response
 
 
 try:

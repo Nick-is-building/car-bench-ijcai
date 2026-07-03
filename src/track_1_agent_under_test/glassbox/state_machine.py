@@ -3,15 +3,27 @@ Zustandsmaschine — Stufe 2.
 
 INTAKE → CAPABILITY_CHECK → (CLARIFY | PLAN) → POLICY_CHECK → EXECUTE → VERIFY → RESPOND
 
-Jeder Zustand hat ein eigenes enges Prompt-Modul. Das LLM laeuft nie frei:
-es produziert strukturierten JSON-Output innerhalb des jeweiligen Zustands.
-Temperatur 0, idempotente Tool-Calls (kein doppeltes Ausfuehren bei Retry).
+Das LLM laeuft nie frei: jeder Zustand hat ein eigenes enges Prompt-Modul mit
+Temperatur 0 und JSON-Schema-Output. Die Maschine ist RESUMIERBAR, weil das
+A2A-Protokoll multi-turn ist: Tool-Calls werden als Aktion an die A2A-Schicht
+zurueckgegeben (EmitToolCalls), der Evaluator fuehrt sie aus und schickt die
+Ergebnisse in einer neuen Nachricht — dann setzt `resume()` am EXECUTE-Punkt
+fort, statt bei INTAKE neu zu starten.
+
+PLAN→POLICY_CHECK→EXECUTE laeuft als begrenzte Schleife (siehe ADR-0002):
+der Planner liefert pro Runde nur die sofort ausfuehrbaren Schritte; Schritte,
+deren Argumente von Ergebnissen abhaengen, kommen in der naechsten Runde.
+Leerer Plan = Turn-Toolarbeit abgeschlossen → VERIFY → RESPOND.
+
+Idempotenz: deterministische call_ids (turn/runde/index), und ein identischer
+(tool, argumente)-Call wird innerhalb eines Turns nie doppelt ausgefuehrt
+(vgl. das "Sunroof zweimal geoeffnet"-Beispiel im Benchmark-Repo).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable
 
 from .ledger import Ledger
 
@@ -28,113 +40,243 @@ class State(Enum):
     DONE = auto()
 
 
+# Upper bound for PLAN→EXECUTE rounds per user turn. A well-formed task never
+# needs more than a handful of sequential dependency hops; the bound only
+# stops planner loops deterministically.
+MAX_PLAN_ROUNDS = 8
+
+# Deterministic fallback texts (used only while later Stufen are stubs, or as
+# last-resort safety). Honest, no fabricated alternatives.
+FALLBACK_UNAVAILABLE = (
+    "I'm sorry, I can't do that with the controls available in this car."
+)
+FALLBACK_POLICY_BLOCK = (
+    "I'm sorry, I can't do that because it would conflict with a vehicle policy."
+)
+
+
+@dataclass
+class PlannedCall:
+    tool: str
+    arguments: dict
+    call_id: str
+    rationale: str = ""
+
+    @property
+    def signature(self) -> str:
+        return f"{self.tool}:{json.dumps(self.arguments, sort_keys=True)}"
+
+
+class Action:
+    """Base class for what the A2A layer must do next."""
+
+
+@dataclass
+class EmitToolCalls(Action):
+    calls: list[PlannedCall]
+
+
+@dataclass
+class EmitText(Action):
+    text: str
+
+
 @dataclass
 class TurnContext:
-    """Everything the state machine needs for one agent turn."""
+    """Everything the state machine needs for one user turn.
+
+    Persists across A2A messages within the turn (tool-call round trips).
+    """
     ledger: Ledger
     tools: list[dict]
     model: str
     current_state: State = State.INTAKE
 
-    # outputs filled by each state
     intent: dict = field(default_factory=dict)
     capability_result: str = ""          # "covered" | "uncovered" | "ambiguous"
-    plan: list[dict] = field(default_factory=list)
-    policy_violations: list[str] = field(default_factory=list)
-    tool_calls_to_execute: list[dict] = field(default_factory=list)
+    plan_round: int = 0
+    pending_calls: list[PlannedCall] = field(default_factory=list)
+    executed_signatures: set[str] = field(default_factory=set)
+    policy_violations: list = field(default_factory=list)
     clarification_question: str = ""
     final_response: str = ""
+    # state trace for tests/debugging — appended on every transition
+    state_trace: list[str] = field(default_factory=list)
 
-
-ToolExecutor = Callable[[str, dict, str], Any]
+    def transition(self, state: State) -> None:
+        self.current_state = state
+        self.state_trace.append(state.name)
 
 
 class StateMachine:
-    """
-    Orchestrates one agent turn through the fixed state sequence.
+    """Orchestrates one agent turn through the fixed state sequence.
 
-    Call `run_turn(ctx, tool_executor)` to process a single user turn.
-    The tool_executor callback is provided by the A2A layer and actually
-    sends tool calls to the evaluator.
+    `run_turn(ctx)` starts a turn after a user message.
+    `resume(ctx)` continues after tool results were recorded in the ledger.
+    Both return an Action for the A2A layer.
     """
 
-    def run_turn(
-        self,
-        ctx: TurnContext,
-        tool_executor: ToolExecutor,
-    ) -> str:
-        """Run the full state sequence and return the agent's text response."""
+    def run_turn(self, ctx: TurnContext) -> Action:
         from .capability import CapabilityMatcher
-        from .policies import PolicyChecker
-        from .guard import FabricationGuard
-        from .disambiguation import DisambiguationEngine
         from . import prompts
 
-        ctx.current_state = State.INTAKE
-        intent = prompts.intake.extract_intent(ctx)
-        ctx.intent = intent
-        ctx.current_state = State.CAPABILITY_CHECK
+        ctx.transition(State.INTAKE)
+        ctx.intent = prompts.intake.extract_intent(ctx)
 
+        ctx.transition(State.CAPABILITY_CHECK)
         matcher = CapabilityMatcher(ctx.tools)
-        ctx.capability_result = matcher.check(intent)
+        ctx.capability_result = self._capability_check(matcher, ctx)
 
         if ctx.capability_result == "uncovered":
-            ctx.current_state = State.RESPOND
-            response = prompts.respond.generate_honest_refusal(ctx)
-            ctx.final_response = response
-            ctx.ledger.add_agent_response(response)
-            ctx.current_state = State.DONE
-            return response
+            return self._respond_refusal(ctx)
 
         if ctx.capability_result == "ambiguous":
-            ctx.current_state = State.CLARIFY
-            engine = DisambiguationEngine()
-            result = engine.resolve(ctx)
-            if result.needs_user_clarification:
-                ctx.clarification_question = result.question
-                ctx.current_state = State.RESPOND
-                ctx.ledger.add_agent_response(result.question)
-                ctx.current_state = State.DONE
-                return result.question
-            ctx.intent = result.resolved_intent
+            ctx.transition(State.CLARIFY)
+            action = self._clarify(ctx)
+            if action is not None:
+                return action
+            # ambiguity was resolved internally — fall through to PLAN
 
-        ctx.current_state = State.PLAN
-        ctx.plan = prompts.plan.build_plan(ctx)
+        return self._plan_execute_loop(ctx, matcher)
 
-        ctx.current_state = State.POLICY_CHECK
-        checker = PolicyChecker()
-        violations = checker.pre_flight(ctx)
-        if violations:
-            ctx.policy_violations = violations
-            ctx.current_state = State.RESPOND
-            response = prompts.respond.generate_policy_block(ctx)
-            ctx.final_response = response
-            ctx.ledger.add_agent_response(response)
-            ctx.current_state = State.DONE
-            return response
+    def resume(self, ctx: TurnContext) -> Action:
+        """Continue after the A2A layer recorded tool results in the ledger."""
+        from .capability import CapabilityMatcher
 
-        ctx.current_state = State.EXECUTE
-        for step in ctx.plan:
-            tool_name = step["tool"]
-            args = step["arguments"]
-            call_id = step["call_id"]
-            ctx.ledger.add_tool_call(tool_name, args, call_id)
-            result = tool_executor(tool_name, args, call_id)
-            ctx.ledger.add_tool_result(tool_name, result, call_id)
+        ctx.pending_calls = []
+        matcher = CapabilityMatcher(ctx.tools)
+        return self._plan_execute_loop(ctx, matcher)
 
-            # Re-check policy after each state-changing step
-            post_violations = checker.post_execution(tool_name, args, result, ctx)
-            if post_violations:
-                ctx.policy_violations.extend(post_violations)
+    # --- PLAN → POLICY_CHECK → EXECUTE (bounded loop, ADR-0002) ---
 
-        ctx.current_state = State.VERIFY
-        guard = FabricationGuard()
+    def _plan_execute_loop(self, ctx: TurnContext, matcher) -> Action:
+        from . import prompts
+
+        while ctx.plan_round < MAX_PLAN_ROUNDS:
+            ctx.plan_round += 1
+            ctx.transition(State.PLAN)
+            steps = prompts.plan.build_plan(ctx)
+            if not steps:
+                break
+
+            calls: list[PlannedCall] = []
+            saw_unknown_tool = False
+            for i, step in enumerate(steps):
+                call = PlannedCall(
+                    tool=step["tool"],
+                    arguments=step.get("arguments", {}),
+                    call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_s{i}",
+                    rationale=step.get("rationale", ""),
+                )
+                # per-step capability guard: never emit a call the evaluator
+                # has no tool for (deterministic, no LLM)
+                if matcher.check_step(call.tool, call.arguments) == "uncovered":
+                    saw_unknown_tool = True
+                    continue
+                # idempotency: identical (tool, args) never executes twice per turn
+                if call.signature in ctx.executed_signatures:
+                    continue
+                calls.append(call)
+
+            if not calls:
+                if saw_unknown_tool:
+                    # planner wants a capability that does not exist
+                    return self._respond_refusal(ctx)
+                # everything was a duplicate → planner is looping; stop
+                break
+
+            ctx.transition(State.POLICY_CHECK)
+            violations = self._policy_pre_flight(ctx, calls)
+            if violations:
+                ctx.policy_violations = violations
+                return self._respond_policy_block(ctx)
+
+            ctx.transition(State.EXECUTE)
+            for call in calls:
+                ctx.ledger.add_tool_call(call.tool, call.arguments, call.call_id)
+                ctx.executed_signatures.add(call.signature)
+            ctx.pending_calls = calls
+            return EmitToolCalls(calls)
+
+        return self._verify_and_respond(ctx)
+
+    # --- terminal paths ---
+
+    def _verify_and_respond(self, ctx: TurnContext) -> Action:
+        from .guard import FabricationGuard
+        from . import prompts
+
+        ctx.transition(State.VERIFY)
         draft = prompts.verify.draft_response(ctx)
-        safe_response = guard.sanitize(draft, ctx.ledger)
+        try:
+            safe = FabricationGuard().sanitize(draft, ctx.ledger)
+        except NotImplementedError:  # Stufe 5 pass-through
+            safe = draft
 
-        ctx.current_state = State.RESPOND
-        final = prompts.respond.finalize(safe_response, ctx)
-        ctx.final_response = final
-        ctx.ledger.add_agent_response(final)
-        ctx.current_state = State.DONE
-        return final
+        ctx.transition(State.RESPOND)
+        final = prompts.respond.finalize(safe, ctx)
+        return self._finish(ctx, final)
+
+    def _respond_refusal(self, ctx: TurnContext) -> Action:
+        from . import prompts
+
+        ctx.transition(State.RESPOND)
+        try:
+            text = prompts.respond.generate_honest_refusal(ctx)
+        except NotImplementedError:  # Stufe 3 pass-through
+            text = FALLBACK_UNAVAILABLE
+        return self._finish(ctx, text)
+
+    def _respond_policy_block(self, ctx: TurnContext) -> Action:
+        from . import prompts
+
+        ctx.transition(State.RESPOND)
+        try:
+            text = prompts.respond.generate_policy_block(ctx)
+        except NotImplementedError:  # Stufe 4 pass-through
+            text = FALLBACK_POLICY_BLOCK
+        return self._finish(ctx, text)
+
+    def _finish(self, ctx: TurnContext, text: str) -> EmitText:
+        ctx.final_response = text
+        ctx.ledger.add_agent_response(text)
+        ctx.transition(State.DONE)
+        return EmitText(text)
+
+    # --- stub-safe component calls (pass-through until their Stufe lands) ---
+
+    def _capability_check(self, matcher, ctx: TurnContext) -> str:
+        try:
+            return matcher.check(ctx.intent)
+        except NotImplementedError:  # Stufe 3 pass-through
+            return "ambiguous" if ctx.intent.get("is_ambiguous") else "covered"
+
+    def _clarify(self, ctx: TurnContext) -> Action | None:
+        """Returns an EmitText question, or None if resolved internally."""
+        from .disambiguation import DisambiguationEngine
+
+        try:
+            result = DisambiguationEngine().resolve(ctx)
+        except NotImplementedError:
+            # Stufe 6 pass-through: conservative default — ask the question
+            # that INTAKE already formulated (deterministic, no extra call)
+            question = ctx.intent.get("clarification_question", "").strip()
+            if not question:
+                reason = ctx.intent.get("ambiguity_reason", "your request")
+                question = f"Just to make sure I get this right: could you clarify {reason}?"
+            ctx.clarification_question = question
+            return self._finish(ctx, question)
+
+        if result.needs_user_clarification:
+            ctx.clarification_question = result.question
+            return self._finish(ctx, result.question)
+        ctx.intent = result.resolved_intent or ctx.intent
+        return None
+
+    def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall]) -> list:
+        from .policies import PolicyChecker
+
+        try:
+            return PolicyChecker().pre_flight(ctx)
+        except NotImplementedError:  # Stufe 4 pass-through
+            return []

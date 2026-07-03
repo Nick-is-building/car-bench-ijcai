@@ -69,9 +69,9 @@ class CapabilityMatcher:
         """
         Stufe 3 implementation point.
 
-        intent keys (from prompts.intake):
+        intent keys (from prompts.intake.Intent):
           - required_tools: list[str]   tools the plan would need
-          - required_params: dict[str, list[str]]  params per tool
+          - required_params: list[{tool: str, params: list[str]}]
           - is_ambiguous: bool
 
         Returns:

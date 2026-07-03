@@ -9,8 +9,9 @@ Einheitlicher Aufruf mit:
 """
 from __future__ import annotations
 
-import json
 import os
+import time
+from contextvars import ContextVar
 from typing import Any, Type
 
 from litellm import completion
@@ -19,6 +20,35 @@ from pydantic import BaseModel
 
 _DEFAULT_MODEL = os.getenv("AGENT_LLM", "anthropic/claude-sonnet-4-6")
 _MAX_RETRIES = 2
+
+# Per-turn usage accumulator (set by the A2A layer, async-safe via ContextVar).
+# Keys: prompt_tokens, completion_tokens, thinking_tokens, cost, num_llm_calls,
+# total_llm_time_ms.
+_metrics_sink: ContextVar[dict | None] = ContextVar("glassbox_metrics_sink", default=None)
+
+
+def set_metrics_sink(sink: dict | None) -> None:
+    _metrics_sink.set(sink)
+
+
+def _completion_with_metrics(**kwargs) -> Any:
+    start = time.perf_counter()
+    resp = completion(**kwargs)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+    sink = _metrics_sink.get()
+    if sink is not None:
+        usage = getattr(resp, "usage", None)
+        if usage:
+            sink["prompt_tokens"] = sink.get("prompt_tokens", 0) + (getattr(usage, "prompt_tokens", 0) or 0)
+            sink["completion_tokens"] = sink.get("completion_tokens", 0) + (getattr(usage, "completion_tokens", 0) or 0)
+            details = getattr(usage, "completion_tokens_details", None)
+            if details:
+                sink["thinking_tokens"] = sink.get("thinking_tokens", 0) + (getattr(details, "reasoning_tokens", 0) or 0)
+        sink["cost"] = sink.get("cost", 0.0) + (getattr(resp, "_hidden_params", {}).get("response_cost", 0.0) or 0.0)
+        sink["num_llm_calls"] = sink.get("num_llm_calls", 0) + 1
+        sink["total_llm_time_ms"] = sink.get("total_llm_time_ms", 0.0) + elapsed_ms
+    return resp
 
 
 def call_structured(
@@ -48,7 +78,7 @@ def call_structured(
             }
             if tools:
                 kwargs["tools"] = tools
-            resp = completion(**kwargs)
+            resp = _completion_with_metrics(**kwargs)
             content = resp.choices[0].message.content
             if isinstance(content, str):
                 return schema.model_validate_json(content)
@@ -78,7 +108,7 @@ def call_tool_use(
     msgs = _with_system(messages, system)
     _apply_cache_hints(msgs, tools)
 
-    resp = completion(
+    resp = _completion_with_metrics(
         model=mdl,
         messages=msgs,
         tools=tools,
