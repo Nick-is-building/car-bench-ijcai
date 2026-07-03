@@ -5,6 +5,18 @@ All notable changes to the glassbox CAR-bench agent.
 ## [Unreleased]
 
 ### Added
+- Stufe 2 — Zustandsmaschine vollständig (ADR-0002):
+  - `state_machine.py`: resumable `run_turn()`/`resume()` returning actions
+    (`EmitToolCalls`/`EmitText`), bounded PLAN→POLICY_CHECK→EXECUTE loop,
+    deterministic call ids, per-turn idempotency signatures, stub-safe
+    pass-through defaults for Stufen 3–7
+  - `prompts/intake.py`, `prompts/plan.py`, `prompts/verify.py` implemented
+    (Temp 0, JSON-Schema); `prompts/respond.finalize` as deterministic cleanup
+  - `prompts/common.py`: deterministic transcript/tool-catalog rendering
+  - `glassbox_agent.py`: rewired to the resumable protocol, turn metrics via
+    ContextVar sink in `llm.py`
+  - `tests/test_glassbox_state_machine.py`: 9 deterministic unit tests
+    (fake LLM, no API keys needed)
 - `src/track_1_agent_under_test/glassbox/` — deterministic shell package skeleton
   - `ledger.py` — Provenienz-Ledger (Stufe 1, fully implemented)
   - `state_machine.py` — Zustandsmaschine INTAKE→RESPOND (Stufe 2, stub)
