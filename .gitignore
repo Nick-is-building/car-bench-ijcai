@@ -23,3 +23,14 @@ docker-compose.yml
 a2a-scenario.toml
 scenarios/**/docker-compose.yml
 scenarios/**/a2a-scenario.toml
+
+# LaTeX build artefacts
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+paper/main.pdf

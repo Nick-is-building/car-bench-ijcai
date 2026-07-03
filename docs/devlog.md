@@ -62,6 +62,44 @@ respond.generate_honest_refusal). Danach Smoke-Test wiederholen — Hallucinatio
 
 ---
 
+## 2026-07-03 — Stufe 3: Capability-Matcher implementiert + Stabilitätstest
+
+**These (vor dem Lauf):** AUT-POL:005-Guard macht Hallucination-Erkennung deterministisch —
+unabhängig vom LLM; Base-False-positive durch Intake-Präzisierung behebbar.
+
+**Implementierung:**
+- `capability.py`: `CapabilityMatcher.check()` — deterministischer 3-Wege-Check (kein LLM);
+  `required_but_missing_tools` cross-validiert gegen Index (verhindert LLM-Überreporting);
+  `required_params` normiert via `param.split("=")[0].strip()`
+- `prompts/intake.py`: `required_params` auf user-explizit genannte Werte beschränkt (exakter
+  Schema-Name) — behebt Base-False-positive: LLM listete `location_id`/`time` für `get_weather`
+  (halluzinierte Alias-Namen; korrekte Namen wären `location_or_poi_id` etc.)
+- `prompts/capability_check.py`: `generate_honest_refusal()` via LLM (Refusal-Schema, Temp 0)
+- `prompts/plan.py`: `capability_missing`-Flag; "Fully handled" = alle State-Changes ausgeführt
+- `prompts/verify.py`: Anti-Fabrikations-Regeln — nur vergangene Tool-Calls, nie Future-Tense
+- `state_machine.py`: AUT-POL:005 deterministischer Guard — blockiert `open_close_sunroof` wenn
+  `open_close_sunshade` nicht im Katalog; kein LLM-Aufruf, kein Varianz-Risiko
+- Tests: 22→23 Unit-Tests, alle grün
+
+**Ergebnis (4 Stabilitätsläufe, Pass^1, 1 Trial je Lauf):**
+
+| Lauf | Base  | Hallucination | Disamb. | Gesamt  |
+|------|-------|---------------|---------|---------|
+| 1    | 100 % | **100 %**     | 100 %   | 100 %   |
+| 2    | 0 %   | **100 %**     | 0 %     | 33.3 %  |
+| 3    | 100 % | **100 %**     | 0 %     | 66.7 %  |
+| 4    | 100 % | **100 %**     | 0 %     | 66.7 %  |
+
+**Befund:** Hallucination deterministisch 100 % in 4/4 Läufen — These bestätigt.
+Base-Variabilität (3/4): Smoke-Task-Selektion zufällig; der Fix behebt den bekannten
+weather-False-positive, andere Tasks können weiter schwanken (LLM-Restrisiko, kein Guard).
+Disambiguation: Stub — Stufe 6 ausstehend. Details → `docs/experiments/2026-07-03-stufe3-smoke.md`.
+
+**Nächste Schritte:** Stufe 4 (Policy-Compiler) oder Stufe 6 (Disambiguierung).
+Bis 10. Juli müssen Stufen 4 und 5 stehen (MVP-Kette laut Bauplan).
+
+---
+
 ## 2026-07-03 — Review-Befund: PLAN-Runden-Bound war stille Wertungsentscheidung (ADR-0003)
 
 **Befund (aus Projekt-Review):** `MAX_PLAN_ROUNDS = 8` aus Stufe 2 war undokumentiert dimensioniert. CAR-bench-Tasks haben bis zu 9 GT-Aktionen — ein zu enger Bound schneidet legitime Tasks still ab (`r_actions`/`r_tool_subset` = 0, dreifach über Pass^3).

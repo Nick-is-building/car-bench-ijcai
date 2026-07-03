@@ -4,6 +4,34 @@ All notable changes to the glassbox CAR-bench agent.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-03
+
+### Added
+- Stufe 3 — Capability-Matcher vollständig (commit 589db23):
+  - `capability.py`: `CapabilityMatcher.check()` — deterministisch, kein LLM;
+    `required_but_missing_tools` cross-validiert gegen Tool-Index;
+    param-Name-Normierung via `split("=")[0].strip()`
+  - `prompts/intake.py`: `required_params` auf user-explizit genannte Werte beschränkt;
+    behebt Base-False-positive (LLM listete halluzinierte Alias-Namen für `get_weather`)
+  - `prompts/capability_check.py`: `generate_honest_refusal()` via LLM (Refusal-Schema, Temp 0)
+  - `prompts/plan.py`: `capability_missing`-Flag + "Fully handled" = alle State-Changes ausgeführt
+  - `prompts/verify.py`: Anti-Fabrikations-Regeln (nur vergangene Tool-Calls, nie Future-Tense)
+  - `state_machine.py`: AUT-POL:005 deterministischer Guard — `open_close_sunroof` blockiert
+    wenn `open_close_sunshade` nicht im Katalog; unabhängig von LLM-Zuverlässigkeit
+  - `tests/test_glassbox_state_machine.py`: 22→23 Tests; `TOOLS_NO_SUNSHADE`-Fixture für Guard
+  - `docs/experiments/2026-07-03-stufe3-smoke.md`: Stabilitätstest (4 Läufe) dokumentiert;
+    Hallucination Pass^1 = 100 % in 4/4 Läufen (deterministisch bestätigt)
+- `paper/` — IJCAI-ECAI 2026 Paper-Skelett:
+  - `ijcai26.sty`, `named.bst` aus dem offiziellen Author-Kit
+  - `main.tex`: 4-Seiten-Struktur vorgezeichnet (Abstract + 5 Abschnitte + Related Work + Fazit)
+  - `references.bib`: CAR-bench-Pflichtzitat + tau-bench
+  - `build.sh`: pdflatex-Kompilation + Seitenzahl-Check
+  - `claims.md`: Claims-zu-Evidenz-Tabelle (Bauplan §8)
+  - `figures/`: Platzhalter für skriptbasierte Ergebnisgrafiken
+
+### Fixed
+- `.gitignore`: LaTeX-Build-Artefakte (`*.aux`, `*.log`, `*.bbl` etc.) ausgeschlossen
+
 ## [0.2.1] — 2026-07-03
 
 ### Fixed

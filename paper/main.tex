@@ -1,0 +1,149 @@
+%%%% CAR-bench Competition Paper — IJCAI-ECAI 2026
+%%%% Track: CAR-bench Competition (non-archival, 4 pages + refs)
+%%%% Deadline: 26 July 2026 (AoE)
+
+\documentclass{article}
+\pdfpagewidth=8.5in
+\pdfpageheight=11in
+
+\usepackage{ijcai26}
+\usepackage{times}
+\usepackage{soul}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage[utf8]{inputenc}
+\usepackage[small]{caption}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+% Comment out for camera-ready:
+\usepackage[switch]{lineno}
+\linenumbers
+
+\urlstyle{same}
+
+\pdfinfo{
+/TemplateVersion (IJCAI.2026.0)
+}
+
+\title{Deterministic Gates for LLM Agents:\\
+       Improving Pass\textsuperscript{3} Consistency on CAR-bench}
+
+% TODO: fill in author/affiliation before submission
+\author{
+    Author Name
+    \affiliations
+    Affiliation
+    \emails
+    email@example.com
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+% TODO: write after results are final (~200 words)
+% Cover: thesis (deterministic shell raises Pass^3), method (7-stage pipeline),
+% key result (Hallucination Pass^3 X→Y, Disambiguation X→Y, Base held),
+% conclusion (deterministic pre/post-flight checks reduce variance without
+% sacrificing capability).
+\end{abstract}
+
+% -----------------------------------------------------------------------
+\section{Introduction}
+% ~0.5 col — motivation + thesis
+%
+% Context: CAR-bench measures LLM agent consistency via Pass^3 (task passes
+% all three independent runs). Stochastic LLM decisions destroy Pass^3 even
+% when the agent "knows" the right answer. This is the gap we exploit.
+%
+% Thesis: A deterministic decision shell — capability checking, policy
+% enforcement, fabrication guard — reduces variance and raises Pass^3,
+% especially on Hallucination and Disambiguation, without hurting Base.
+%
+% Table: Baseline numbers (Tab.~\ref{tab:results}) show opportunity:
+% Hallucination=0.48, Disambiguation=0.46 for best-known agent (Claude Opus).
+
+\section{Method: Deterministic Shell Architecture}
+% ~1.5 col — the 7-stage pipeline and why each stage matters
+
+\subsection{Ledger and State Machine}
+% Stages 1--2: provenance ledger + INTAKE→CAPABILITY\_CHECK→(CLARIFY|PLAN)
+% →POLICY\_CHECK→EXECUTE→VERIFY→RESPOND with bounded loop, idempotent call IDs
+
+\subsection{Capability Matcher}
+% Stage 3: deterministic 3-way check at every planning step (not just intake)
+% Three removal types: tool, parameter, result-field
+
+\subsection{Policy Compiler}
+% Stage 4: 19 policies as pre-flight predicates; structural impossibility
+% of violations rather than probabilistic avoidance
+
+\subsection{Fabrication Guard}
+% Stage 5: every claim in the response needs provenance in the ledger
+% (tool observation, user statement, policy default)
+
+\subsection{Disambiguation Engine}
+% Stage 6: internal resolution first (preferences, policies, context);
+% user query only when genuinely unresolvable + action is state-changing
+
+\subsection{Auditor}
+% Stage 7: targeted self-check at two expensive checkpoints only
+
+% -----------------------------------------------------------------------
+\section{Experiments}
+
+\subsection{Setup}
+% Agent model: anthropic/claude-sonnet-4-6 (dev), claude-opus-4-7 (eval)
+% User-Sim + Judge: gemini-2.5-flash
+% Splits: base (100 train / 100 public-val), hallucination (98/100),
+%         disambiguation (56/69)
+% Metric: Pass^3 (3 independent trials, task counts only if all three pass)
+
+\subsection{Calibration Run (10 July)}
+% TODO: fill in after calibration run
+% Report Pass^3 on public-validation set, compare to baseline
+
+% -----------------------------------------------------------------------
+\section{Results}
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Agent & Overall & Base & Hall. & Disamb. \\
+\midrule
+Claude Opus 4.6 (vanilla) & 0.58 & 0.80 & 0.48 & 0.46 \\
+GPT-5 thinking            & 0.54 & 0.66 & 0.60 & 0.36 \\
+\midrule
+Ours (TODO)               & --   & --   & --   & --   \\
+\bottomrule
+\end{tabular}
+\caption{Pass\textsuperscript{3} on public-validation set.
+         Baseline numbers are publicly reported.
+         Our result will be filled in after the final evaluation (19 July).}
+\label{tab:results}
+\end{table}
+
+% TODO: ablation table (each stage's contribution to Pass^3)
+% TODO: Pass^1 / Pass^3 / Pass@3 gap analysis (shows where variance was)
+
+% -----------------------------------------------------------------------
+\section{Related Work}
+
+% CAR-bench~\cite{kirmayr2026carbench}: the benchmark we evaluate on (required cite)
+% tau-bench~\cite{yao2024taubench}: tool-agent-user interaction benchmark
+% Deterministic agent shells / constrained LLM decoding (related approaches)
+
+% -----------------------------------------------------------------------
+\section{Conclusion}
+% 3--4 sentences: thesis confirmed/refuted, key numbers, open limitations
+
+\section*{Acknowledgements}
+% optional — add if applicable
+
+\bibliographystyle{named}
+\bibliography{references}
+
+\end{document}
