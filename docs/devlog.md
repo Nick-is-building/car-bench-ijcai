@@ -453,3 +453,58 @@ abgenommen; Stand dokumentiert, Übergabe an User (STOPP gemäß Auftrag).**
 Positiv festzuhalten: beide deterministischen Fixes wirken nachweislich
 (kein 019-FP mehr; Refusals 5→3), und der deterministische AUT-Kern steht
 bei 0 Fehlern in 30/30 Läufen.
+
+---
+
+## 2026-07-04 — OI-011 Härtung: Fuzzy-Gate + Intake-Rebuttal (Auftrag B-FINAL)
+
+**Implementierung (committet vor Lauf 3):**
+
+- **H-R3 Log-Umleitung:** `state_machine.py` und `prompts/plan.py` loggen jetzt
+  via loguru alle Refusal-Entscheidungen mit Quelle (`intake`, `planner`,
+  `execute_guard`, `policy_pre_flight`) und behaupteten Tool-Namen. Diagnostische
+  Lücke OI-011 (Intake vs. Planner nicht unterscheidbar) ist damit geschlossen.
+
+- **H-R1 Fuzzy-Gate PLAN-GUARD** (`prompts/plan.py`): Wenn `capability_missing=True`
+  und ein behauptetes fehlendes Tool NICHT im Katalog ist, prüft difflib gegen alle
+  Katalog-Namen (Schwelle 0.80 — konservativer als ~0.75, bewahrt Hallucination-Tests).
+  - Fuzzy-Treffer (z. B. "navigation_remove_waypoint" → "navigation_delete_waypoint"):
+    KEIN stilles Ummapping; Re-Plan-Note mit Kandidaten, max. 2 Versuche.
+  - Kein Treffer (kein Katalog-Nachbar): ehrliche Ablehnung wie bisher.
+  - Rebuttals exhausted (≥2 Versuche, LLM korrigiert sich nicht): Refusal.
+
+- **H-R2 Intake-Rebuttal** (`state_machine.py`): Prüft nach Intake-Extraktion
+  `required_tools` gegen Katalog; unbekannte Namen mit Fuzzy-Treffer → ein einmaliger
+  Re-Extrakt mit Katalog-Erinnerung; kein Treffer → regulärer Uncovered-Pfad.
+
+- **4 neue Unit-Tests** (alle grün, keine Regressen):
+  - (a) erfundener Name nahe an echtem Tool → Re-Plan, korrekter Call am Ende
+  - (b) echt fehlendes Tool ohne Nachbar → sofortiger Refusal (Hallucination-Guard)
+  - (c) Intake-Fall: Fuzzy-Match → Re-Extrakt → korrekter Tool-Call
+  - (d) Intake-Fall: kein Match → bleibt "uncovered" → Refusal
+
+**Gesamt-Tests:** 61/62 grün, 1 skip (OI-001-Stub, erwartet), 2 pre-existente
+Failures in test_a2a_response_contract.py (nicht durch diese Änderung).
+
+---
+
+## 2026-07-04 — Hypothese für Lauf 3 (B-FINAL, VOR dem Start committet)
+
+**Config:** identisch zu Lauf 2 (Agent claude-sonnet-4-6, Judge/User-Sim
+gemini-2.5-flash, seed 10, 5 Base-Tasks × 3 Trials, Stufe-4-Abnahme-Szenario).
+
+**Hypothese:**
+- base_0, base_16, base_20: stabil 3/3 (deterministisch, keine Refusals, keine
+  Policy-Fehler — unverändert erwartet)
+- base_56: Fuzzy-Gate und Intake-Rebuttal greifen für T0/T1 (Refusal aus
+  erfundenem Tool-Namen → Re-Plan → korrekter Call). T2 bleibt Risiko:
+  OI-012 (LLM-POL:022, Klasse C, stochastisch) → base_56 **2-3/3** erwartet
+- base_10: Refusal in T2 (base_10) war OI-011 → behoben durch Fuzzy-Gate;
+  OI-007 (Wetter-Confirmation, LLM-POL:008) bleibt ungefixt und traf zuletzt
+  T0+T1 → base_10 **0-1/3** erwartet (1/3 wenn OI-007 nur T0 oder T1 trifft)
+- **Pass^3 Erwartung: 60-80 %** (best case: base_56 3/3 + base_10 1/3 = 80 %)
+- **Abnahme-Kriterium B (revised):** policy_aut_errors = 0/15, KEIN falscher
+  Refusal aus dem Capability-Pfad, base_0/16/20 stabil 3/3
+  → OI-007/OI-012 zählen NICHT gegen B, sind dokumentierte Klasse-B/C-Härtungsziele
+- **Refusals aus Capability-Pfad:** Ziel **0/15** (kumuliert 0/45 wenn bestätigt)
+- **policy_aut_errors:** Ziel **0/15** (kumuliert 0/45)

@@ -52,18 +52,22 @@ clarification_question presenting the options. Otherwise leave both empty.
 """
 
 
-def extract_intent(ctx: "TurnContext") -> dict:  # type: ignore[name-defined]
-    """Extract structured intent from the last user message (LLM, temp 0)."""
+def extract_intent(ctx: "TurnContext", rebuttal_note: str = "") -> dict:  # type: ignore[name-defined]
+    """Extract structured intent from the last user message (LLM, temp 0).
+
+    rebuttal_note: if set (INTAKE-REBUTTAL), appended to the user message so the
+    LLM knows some required_tools names were not found and gets catalog candidates.
+    """
     system = (
         _SYSTEM
         + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
         + "\n\n# Available tools\n" + common.render_tool_catalog(ctx.tools)
     )
     transcript = common.render_transcript(ctx.ledger, include_tools=False)
-    messages = [{
-        "role": "user",
-        "content": f"# Conversation\n{transcript}\n\nExtract the intent of the last user message.",
-    }]
+    base_content = f"# Conversation\n{transcript}\n\nExtract the intent of the last user message."
+    if rebuttal_note:
+        base_content += f"\n\n# CATALOG CORRECTION\n{rebuttal_note}"
+    messages = [{"role": "user", "content": base_content}]
     intent = llm.call_structured(messages, Intent, model=ctx.model, system=system)
     return intent.model_dump()
 

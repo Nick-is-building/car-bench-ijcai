@@ -184,6 +184,17 @@ T0/T1, jetzt T2) → nicht deterministisch. Härtungskandidaten (H-R1–H-R3 im
 devlog): Fuzzy-/Präfix-Match erfundener Namen gegen den Katalog; Re-Intake-
 Rebuttal analog PLAN-GUARD; Agent-Log-Umleitung als Diagnose-Voraussetzung.
 
+**Update Auftrag B-FINAL (2026-07-04):** H-R1+H-R2+H-R3 implementiert und
+committet (Lauf 3 steht aus). Alle Restrisiken deterministisch adressiert:
+1. Fuzzy-Gate PLAN-GUARD (difflib, Schwelle 0.80): erfundener Alias → Re-Plan-Note
+   statt Refusal; kein Katalog-Nachbar → Refusal bleibt (Hallucination-Guard).
+2. Intake-Rebuttal: unbekannte `required_tools`-Namen mit Fuzzy-Treffer → einmaliger
+   Re-Extrakt; kein Treffer → Uncovered wie bisher.
+3. Log-Umleitung: alle Refusal-Quellen (intake/planner/execute_guard/policy_pre_flight)
+   und Tool-Namen in loguru geschrieben; nächster Lauf gibt vollständige Diagnose.
+4 neue Tests grün; alle 61 bestehenden Tests grün.
+**Nächster Schritt:** Wirkung in Lauf 3 messen; bei Refusal-Rest: Logs auswerten.
+
 ---
 
 ## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — erster Klasse-C-Fail

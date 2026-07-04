@@ -633,5 +633,100 @@ class ResultFieldEntzugTest(unittest.TestCase):
         )
 
 
+class OI011FuzzyGateTest(unittest.TestCase):
+    """OI-011 hardening: fuzzy PLAN-GUARD (H-R1) and INTAKE-REBUTTAL (H-R2)."""
+
+    def test_fuzzy_plan_guard_invents_close_name_replans_then_succeeds(self):
+        """(a) Planner invents close alias → fuzzy re-plan note → LLM uses correct name → no refusal."""
+        # "open_close_sunroof_v2" is not in TOOLS but scores ~0.947 against
+        # "open_close_sunroof" → above FUZZY_THRESHOLD=0.80 → re-plan, not refusal.
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(capability_missing=True,
+                     missing_tools=["open_close_sunroof_v2"],
+                     done_reason="missing: open_close_sunroof_v2"),
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertNotEqual(action.text, FAKE_REFUSAL.response)
+        self.assertFalse(ctx.capability_missing)
+        self.assertEqual(ctx.capability_rebuttals, 1)
+        self.assertTrue(any("open_close_sunroof_v2" in n for n in ctx.policy_notes))
+        executed = [c[0] for batch in trajectory for c in batch]
+        self.assertIn("open_close_sunroof", executed)
+
+    def test_fuzzy_plan_guard_genuinely_missing_no_match_refuses_immediately(self):
+        """(b) Planner reports tool with no catalog neighbour → immediate refusal (hallucination guard preserved)."""
+        # "fly_to_moon" has no fuzzy match in TOOLS → genuine missing → refusal on round 1.
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[Plan(capability_missing=True,
+                        missing_tools=["fly_to_moon"],
+                        done_reason="missing: fly_to_moon")],
+            refusals=[FAKE_REFUSAL],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertEqual(action.text, FAKE_REFUSAL.response)
+        self.assertTrue(ctx.capability_missing)
+        self.assertEqual(trajectory, [])
+
+    def test_intake_rebuttal_fuzzy_match_re_extracts_correct_intent(self):
+        """(c) Intake lists unknown tool with fuzzy match → one re-extract → correct tool used."""
+        # First intent has "open_close_sunroof_v2" (not in catalog, fuzzy → "open_close_sunroof").
+        # Re-extract returns the corrected intent → capability check passes.
+        fake = FakeLLM(
+            intents=[
+                Intent(
+                    user_request_summary="Open the sunroof",
+                    required_tools=["open_close_sunroof_v2"],
+                    is_state_changing=True,
+                    is_ambiguous=False,
+                ),
+                Intent(
+                    user_request_summary="Open the sunroof",
+                    required_tools=["open_close_sunroof"],
+                    is_state_changing=True,
+                    is_ambiguous=False,
+                ),
+            ],
+            plans=[
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertNotEqual(action.text, FAKE_REFUSAL.response)
+        self.assertTrue(ctx.intake_rebuttal_done)
+        executed = [c[0] for batch in trajectory for c in batch]
+        self.assertIn("open_close_sunroof", executed)
+
+    def test_intake_rebuttal_no_fuzzy_match_stays_uncovered(self):
+        """(d) Intake lists unknown tool with no catalog neighbour → no re-extract → refusal."""
+        # "fly_to_moon" has no fuzzy match in TOOLS → intake stays uncovered.
+        fake = FakeLLM(
+            intents=[Intent(
+                user_request_summary="Fly to the moon",
+                required_tools=["fly_to_moon"],
+                is_state_changing=True,
+                is_ambiguous=False,
+            )],
+            refusals=[FAKE_REFUSAL],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertEqual(action.text, FAKE_REFUSAL.response)
+        self.assertFalse(ctx.intake_rebuttal_done)
+        self.assertEqual(ctx.capability_result, "uncovered")
+        self.assertEqual(trajectory, [])
+
+
 if __name__ == "__main__":
     unittest.main()

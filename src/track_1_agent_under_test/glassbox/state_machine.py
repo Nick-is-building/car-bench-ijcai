@@ -25,6 +25,8 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from loguru import logger as _log
+
 from .ledger import Ledger
 
 
@@ -117,6 +119,10 @@ class TurnContext:
     plan_bound_hit: bool = False
     # state trace for tests/debugging — appended on every transition
     state_trace: list[str] = field(default_factory=list)
+    # OI-011 diagnostics: tracks where a refusal originated
+    capability_refusal_source: str = ""
+    # OI-011 H-R2: intake re-extract already attempted this turn
+    intake_rebuttal_done: bool = False
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -132,16 +138,61 @@ class StateMachine:
     """
 
     def run_turn(self, ctx: TurnContext) -> Action:
-        from .capability import CapabilityMatcher
+        from .capability import CapabilityIndex, CapabilityMatcher, fuzzy_catalog_hint
         from . import prompts
 
         ctx.transition(State.INTAKE)
         ctx.intent = prompts.intake.extract_intent(ctx)
 
+        # INTAKE-REBUTTAL (OI-011 H-R2): one-time re-extract if required_tools
+        # contains names not in the catalog but close to a catalog tool.
+        # Source of refusal becomes diagnosable: intake vs. planner.
+        if not ctx.intake_rebuttal_done:
+            idx = CapabilityIndex(ctx.tools)
+            unknown_required = [
+                t for t in ctx.intent.get("required_tools", [])
+                if not idx.has_tool(t)
+            ]
+            if unknown_required:
+                hints: dict[str, list[str]] = {}
+                for t in unknown_required:
+                    candidates = fuzzy_catalog_hint(t, idx.tool_names)
+                    if candidates:
+                        hints[t] = candidates
+                if hints:
+                    ctx.intake_rebuttal_done = True
+                    note = (
+                        "INTAKE-REBUTTAL: some required_tools names are not in the catalog. "
+                        + " ".join(
+                            f"'{t}' → closest: {' / '.join(c)}."
+                            for t, c in hints.items()
+                        )
+                        + " Re-extract using exact catalog tool names."
+                    )
+                    _log.info(
+                        "INTAKE-REBUTTAL: re-extracting intent",
+                        source="intake_required_tools",
+                        fuzzy_hints={t: c for t, c in hints.items()},
+                    )
+                    ctx.intent = prompts.intake.extract_intent(ctx, rebuttal_note=note)
+                else:
+                    _log.warning(
+                        "INTAKE: unknown required_tools with no fuzzy match — will refuse",
+                        source="intake_required_tools",
+                        unknown=unknown_required,
+                    )
+
         ctx.transition(State.CAPABILITY_CHECK)
         matcher = CapabilityMatcher(ctx.tools)
         ctx.capability_result = self._capability_check(matcher, ctx)
         if ctx.capability_result == "uncovered":
+            ctx.capability_refusal_source = "intake"
+            _log.warning(
+                "Refusal: intake capability check uncovered",
+                source="intake",
+                intent_required_tools=ctx.intent.get("required_tools", []),
+                intent_missing=ctx.intent.get("required_but_missing_tools", []),
+            )
             return self._respond_refusal(ctx)
 
         if ctx.capability_result == "ambiguous":
@@ -175,6 +226,12 @@ class StateMachine:
             steps = prompts.plan.build_plan(ctx)
             if not steps:
                 if ctx.capability_missing:
+                    ctx.capability_refusal_source = ctx.capability_refusal_source or "planner"
+                    _log.warning(
+                        "Refusal: planner reported missing capability",
+                        source=ctx.capability_refusal_source,
+                        policy_notes_count=len(ctx.policy_notes),
+                    )
                     return self._respond_refusal(ctx)
                 if ctx.capability_claim_rebutted and ctx.capability_rebuttals < 2:
                     # false missing-capability claim — re-plan with the
@@ -184,7 +241,7 @@ class StateMachine:
                 break
 
             calls: list[PlannedCall] = []
-            saw_unknown_tool = False
+            unknown_tool_names: list[str] = []
             for i, step in enumerate(steps):
                 call = PlannedCall(
                     tool=step["tool"],
@@ -195,7 +252,7 @@ class StateMachine:
                 # per-step capability guard: never emit a call the evaluator
                 # has no tool for (deterministic, no LLM)
                 if matcher.check_step(call.tool, call.arguments) == "uncovered":
-                    saw_unknown_tool = True
+                    unknown_tool_names.append(call.tool)
                     continue
                 # idempotency: identical (tool, args) never executes twice per turn
                 if call.signature in ctx.executed_signatures:
@@ -203,8 +260,14 @@ class StateMachine:
                 calls.append(call)
 
             if not calls:
-                if saw_unknown_tool:
-                    # planner wants a capability that does not exist
+                if unknown_tool_names:
+                    # planner tried to USE unknown tool names in steps — log source
+                    ctx.capability_refusal_source = "execute_guard"
+                    _log.warning(
+                        "Refusal: planner used unknown tool names in steps",
+                        source="execute_guard",
+                        unknown_tools=unknown_tool_names,
+                    )
                     return self._respond_refusal(ctx)
                 # everything was a duplicate → planner is looping; stop
                 break
@@ -216,6 +279,12 @@ class StateMachine:
             if pf.missing_capability:
                 ctx.policy_violations = pf.missing_capability
                 ctx.capability_missing = True
+                ctx.capability_refusal_source = "policy_pre_flight"
+                _log.warning(
+                    "Refusal: policy pre-flight missing capability",
+                    source="policy_pre_flight",
+                    missing=pf.missing_capability,
+                )
                 return self._respond_refusal(ctx)
             if pf.blocked:
                 ctx.policy_violations = pf.blocked

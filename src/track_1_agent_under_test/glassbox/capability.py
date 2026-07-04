@@ -10,8 +10,20 @@ Check laeuft an jedem Planungsschritt, nicht nur beim Intake.
 """
 from __future__ import annotations
 
+import difflib
 from dataclasses import dataclass
 from typing import Literal
+
+# Conservative fuzzy threshold: only match when names are very similar.
+# At 0.80 "open_close_sunshade" vs "open_close_sunroof" scores ~0.757 → no match
+# (genuine missing-capability refusals preserved). Invented aliases like
+# "navigation_remove_waypoint" vs "navigation_delete_waypoint" score ~0.81 → match.
+FUZZY_THRESHOLD = 0.80
+
+
+def fuzzy_catalog_hint(tool_name: str, catalog_names: list[str]) -> list[str]:
+    """Return up to 2 catalog names close to tool_name (empty = no match)."""
+    return difflib.get_close_matches(tool_name, catalog_names, n=2, cutoff=FUZZY_THRESHOLD)
 
 CapabilityResult = Literal["covered", "uncovered", "ambiguous"]
 

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 
+from loguru import logger as _log
 from pydantic import BaseModel, Field, field_validator
 
 from .. import llm
+from ..capability import fuzzy_catalog_hint
 from . import common
 
 
@@ -117,7 +119,55 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
         claimed = [t.strip() for t in result.missing_tools if t and t.strip()]
         truly_missing = [t for t in claimed if not index.has_tool(t)]
         if truly_missing:
-            ctx.capability_missing = True
+            # Fuzzy-gate (OI-011 H-R1): invented alias near a real tool → re-plan
+            # hint instead of immediate refusal.  Threshold 0.80 is conservative:
+            # e.g. "navigation_remove_waypoint" scores ~0.81 against
+            # "navigation_delete_waypoint" (match → re-plan), while
+            # "open_close_sunshade" scores ~0.76 against "open_close_sunroof"
+            # (no match → genuine refusal preserved).
+            hints: list[str] = []
+            no_match: list[str] = []
+            for t in truly_missing:
+                candidates = fuzzy_catalog_hint(t, index.tool_names)
+                if candidates:
+                    top = " / ".join(candidates)
+                    hints.append(
+                        f"PLAN-GUARD: '{t}' is not in the catalog; "
+                        f"closest catalog match: {top}. "
+                        "Use the exact catalog name."
+                    )
+                else:
+                    no_match.append(t)
+
+            if no_match:
+                # at least one tool with no catalog neighbour → genuine missing capability
+                ctx.capability_missing = True
+                _log.warning(
+                    "PLAN-GUARD: genuine missing capability — refusal",
+                    source="planner_capability_missing",
+                    missing_tools=no_match,
+                    claimed=claimed,
+                )
+            elif ctx.capability_rebuttals < 2:
+                # all claimed-missing tools have fuzzy matches → re-plan with hints
+                ctx.capability_claim_rebutted = True
+                for h in hints:
+                    if h not in ctx.policy_notes:
+                        ctx.policy_notes.append(h)
+                _log.info(
+                    "PLAN-GUARD: fuzzy match found — re-planning instead of refusal",
+                    source="planner_capability_missing",
+                    fuzzy_tools=truly_missing,
+                    rebuttal_round=ctx.capability_rebuttals + 1,
+                )
+            else:
+                # rebuttals exhausted (≥2 fuzzy re-plans gave no correction) → refusal
+                ctx.capability_missing = True
+                _log.warning(
+                    "PLAN-GUARD: fuzzy re-plans exhausted — refusal",
+                    source="planner_capability_missing_exhausted",
+                    missing_tools=truly_missing,
+                )
         else:
             ctx.capability_claim_rebutted = True
             names = ", ".join(claimed) if claimed else "(no tool named)"
@@ -128,6 +178,11 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
             )
             if note not in ctx.policy_notes:
                 ctx.policy_notes.append(note)
+            _log.info(
+                "PLAN-GUARD: false capability claim rejected",
+                source="planner_false_claim",
+                named_tools=claimed,
+            )
     return [
         {"tool": s.tool, "arguments": s.arguments, "rationale": s.rationale}
         for s in result.steps
