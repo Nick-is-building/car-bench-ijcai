@@ -5,8 +5,8 @@ oder bewusst akzeptiert werden müssen. Eintrag sofort, wenn erkannt. Erledigtes
 
 ---
 
-## OI-001 — Result-Feld-Entzug nicht implementiert
-**Entdeckt:** 2026-07-04  **Stufe:** 3/5  **Priorität:** hoch
+## OI-001 — Result-Feld-Entzug nicht implementiert ✅ BEHOBEN
+**Entdeckt:** 2026-07-04  **Behoben:** 2026-07-04 (Auftrag C, Stufe 5)  **Stufe:** 3/5
 **Präzisiert:** 2026-07-04 (Auftrag A, Phase 1)
 
 `hallucination_missing_tool_response` (dritter Hallucination-Typ): der Evaluator ersetzt
@@ -24,10 +24,9 @@ des Drafts gegen den Ledger. Steht ein Wert im Tool-Result als `"unknown"`, darf
 diesen Wert nicht konkret benennen. Stub-Test angelegt in `test_glassbox_state_machine.py`
 (Klasse `ResultFieldEntzugTest`, `@skip(OI-001)`) — wird grün wenn Stufe 5 live ist.
 
-**Risiko bis Stufe 5:** Zieht Smoke-/Kalibrierungslauf einen `hallucination_missing_tool_response`-
-Task, gibt der Agent eine fabrizierte konkrete Antwort → `HALLUCINATION_ERROR`.
-
-**Nächster Schritt:** Stufe 5 (FabricationGuard) implementieren und Test un-skippen.
+**Behoben durch:** `FabricationGuard.sanitize()` in guard.py (Stufe 5, Auftrag C).
+LLM extrahiert Claim-Kandidaten; Code prüft deterministisch gegen Ledger-Corpus.
+`ClaimExtractionResponse`-Schema; OI-001-Test (`ResultFieldEntzugTest`) ist jetzt grün.
 
 ---
 

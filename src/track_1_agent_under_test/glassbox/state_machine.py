@@ -123,6 +123,10 @@ class TurnContext:
     capability_refusal_source: str = ""
     # OI-011 H-R2: intake re-extract already attempted this turn
     intake_rebuttal_done: bool = False
+    # C1 guard-interface telemetry: every layer appends its GuardResult here
+    layer_decisions: list = field(default_factory=list)
+    # C2/C3/C4: provenance re-plan attempts before escalating to honesty sink
+    provenance_rebuttals: int = 0
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -185,6 +189,16 @@ class StateMachine:
         ctx.transition(State.CAPABILITY_CHECK)
         matcher = CapabilityMatcher(ctx.tools)
         ctx.capability_result = self._capability_check(matcher, ctx)
+        # C1 telemetry: capability layer verdict
+        from .guard import GuardResult
+        ctx.layer_decisions.append(GuardResult(
+            verdict=(
+                "BLOCK" if ctx.capability_result == "uncovered" else
+                "UNCERTAIN" if ctx.capability_result == "ambiguous" else "PASS"
+            ),
+            layer="CapabilityMatcher",
+            reason=ctx.capability_result,
+        ))
         if ctx.capability_result == "uncovered":
             ctx.capability_refusal_source = "intake"
             _log.warning(
@@ -276,7 +290,13 @@ class StateMachine:
             # block, inject corrective calls, or defer calls to a later round.
             ctx.transition(State.POLICY_CHECK)
             pf = self._policy_pre_flight(ctx, calls, matcher)
+            # C1 telemetry: policy layer verdict
+            from .guard import FabricationGuard, GuardResult
             if pf.missing_capability:
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="PolicyChecker.preflight",
+                    reason=f"missing capability: {pf.missing_capability}",
+                ))
                 ctx.policy_violations = pf.missing_capability
                 ctx.capability_missing = True
                 ctx.capability_refusal_source = "policy_pre_flight"
@@ -287,8 +307,16 @@ class StateMachine:
                 )
                 return self._respond_refusal(ctx)
             if pf.blocked:
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="PolicyChecker.preflight",
+                    reason=f"blocked: {pf.blocked}",
+                ))
                 ctx.policy_violations = pf.blocked
                 return self._respond_policy_block(ctx)
+            ctx.layer_decisions.append(GuardResult(
+                verdict="PASS", layer="PolicyChecker.preflight",
+                reason=f"notes={len(pf.notes)} injected={len(pf.injected)}",
+            ))
             ctx.policy_notes.extend(pf.notes)
             calls = [
                 PlannedCall(
@@ -303,6 +331,46 @@ class StateMachine:
                 # whole batch deferred — re-plan with the pre-flight notes
                 continue
 
+            # Stufe 5 (C2/C3/C4): argument provenance check before emitting calls.
+            # State-changing calls with numeric args must have ledger-verified bindings.
+            fg = FabricationGuard()
+            first_uncertain: tuple | None = None
+            for call in calls:
+                prov = fg.check_tool_arguments(call.tool, call.arguments, ctx.ledger, model=ctx.model)
+                ctx.layer_decisions.append(prov)
+                _log.debug(
+                    "FabricationGuard provenance",
+                    tool=call.tool, verdict=prov.verdict, layer=prov.layer,
+                )
+                if prov.verdict == "BLOCK":
+                    _log.warning(
+                        "FabricationGuard.C2: BLOCK — aborting call",
+                        tool=call.tool, reason=prov.reason,
+                    )
+                    return self._respond_fabrication_block(ctx, prov)
+                if prov.verdict == "UNCERTAIN" and first_uncertain is None:
+                    first_uncertain = (call, prov)
+
+            if first_uncertain is not None:
+                call_unc, prov_unc = first_uncertain
+                if ctx.provenance_rebuttals < 2:
+                    ctx.provenance_rebuttals += 1
+                    ctx.policy_notes.append(
+                        f"PROVENANCE-REPLAN: argument binding uncertain — {prov_unc.reason}. "
+                        f"Re-plan for {call_unc.tool} using only values the user explicitly "
+                        f"stated for that specific item."
+                    )
+                    _log.info(
+                        "FabricationGuard: UNCERTAIN → re-plan",
+                        tool=call_unc.tool, rebuttal=ctx.provenance_rebuttals,
+                    )
+                    continue  # back to while-loop top → re-plan
+                _log.warning(
+                    "FabricationGuard: UNCERTAIN rebuttals exhausted → honesty sink",
+                    tool=call_unc.tool,
+                )
+                return self._respond_provenance_sink(ctx, prov_unc)
+
             ctx.transition(State.EXECUTE)
             for call in calls:
                 ctx.ledger.add_tool_call(call.tool, call.arguments, call.call_id)
@@ -315,19 +383,38 @@ class StateMachine:
     # --- terminal paths ---
 
     def _verify_and_respond(self, ctx: TurnContext) -> Action:
-        from .guard import FabricationGuard
+        from .guard import FabricationGuard, GuardResult
         from . import prompts
 
         ctx.transition(State.VERIFY)
         draft = prompts.verify.draft_response(ctx)
-        try:
-            safe = FabricationGuard().sanitize(draft, ctx.ledger)
-        except NotImplementedError:  # Stufe 5 pass-through
-            safe = draft
+        fg = FabricationGuard()
+        safe = fg.sanitize(draft, ctx.ledger, model=ctx.model)
+        ctx.layer_decisions.append(GuardResult(
+            verdict="BLOCK" if safe != draft else "PASS",
+            layer="FabricationGuard.C5",
+            reason="draft modified" if safe != draft else "draft clean",
+        ))
 
         ctx.transition(State.RESPOND)
         final = prompts.respond.finalize(safe, ctx)
         return self._finish(ctx, final)
+
+    def _respond_fabrication_block(self, ctx: TurnContext, result: "GuardResult") -> Action:
+        ctx.transition(State.RESPOND)
+        text = (
+            "I'm sorry, I can't proceed — I don't have a confirmed value to use. "
+            "Could you clarify the exact value you'd like me to set?"
+        )
+        return self._finish(ctx, text)
+
+    def _respond_provenance_sink(self, ctx: TurnContext, result: "GuardResult") -> Action:
+        ctx.transition(State.RESPOND)
+        text = (
+            "I'm not certain which value you'd like me to use for that. "
+            "Could you confirm the exact setting you have in mind?"
+        )
+        return self._finish(ctx, text)
 
     def _respond_refusal(self, ctx: TurnContext) -> Action:
         from . import prompts

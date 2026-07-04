@@ -16,7 +16,7 @@ from .state_machine import (
 )
 from .capability import CapabilityMatcher, CapabilityIndex
 from .policies import PolicyChecker, PolicyViolation, ALL_POLICIES
-from .guard import FabricationGuard
+from .guard import FabricationGuard, GuardResult
 from .disambiguation import DisambiguationEngine, DisambiguationResult
 from .auditor import Auditor, AuditResult
 
@@ -26,7 +26,7 @@ __all__ = [
     "Action", "EmitText", "EmitToolCalls", "PlannedCall",
     "CapabilityMatcher", "CapabilityIndex",
     "PolicyChecker", "PolicyViolation", "ALL_POLICIES",
-    "FabricationGuard",
+    "FabricationGuard", "GuardResult",
     "DisambiguationEngine", "DisambiguationResult",
     "Auditor", "AuditResult",
 ]

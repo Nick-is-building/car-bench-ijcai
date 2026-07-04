@@ -25,6 +25,13 @@ from track_1_agent_under_test.glassbox.prompts.intake import Intent
 from track_1_agent_under_test.glassbox.prompts.plan import Plan, PlanStep
 from track_1_agent_under_test.glassbox.prompts.verify import Draft
 from track_1_agent_under_test.glassbox.prompts.capability_check import Refusal
+from track_1_agent_under_test.glassbox.guard import (
+    ArgumentAttribution,
+    AttributionResponse,
+    ClaimExtractionResponse,
+    FactualClaim,
+    GuardResult,
+)
 
 
 TOOLS = [
@@ -70,12 +77,15 @@ def intent_ok() -> Intent:
 class FakeLLM:
     """Scripted replacement for llm.call_structured, keyed by schema name."""
 
-    def __init__(self, intents=(), plans=(), drafts=(), refusals=()):
+    def __init__(self, intents=(), plans=(), drafts=(), refusals=(),
+                 attributions=(), claims=()):
         self.queues = {
             "Intent": list(intents),
             "Plan": list(plans),
             "Draft": list(drafts),
             "Refusal": list(refusals),
+            "AttributionResponse": list(attributions),
+            "ClaimExtractionResponse": list(claims),
         }
         self.calls: list[str] = []
 
@@ -84,7 +94,8 @@ class FakeLLM:
         name = schema.__name__
         self.calls.append(name)
         if not self.queues.get(name):
-            raise AssertionError(f"unexpected LLM call for schema {name}")
+            raise AssertionError(f"unexpected LLM call for schema {name!r}; "
+                                 f"queued: {list(self.queues)}, calls so far: {self.calls}")
         return self.queues[name].pop(0)
 
 
@@ -579,10 +590,6 @@ TOOLS_WITH_NAV = TOOLS + [
 ]
 
 
-@unittest.skip("OI-001: Stufe-5 FabricationGuard not yet implemented — "
-               "tool schemas carry no result-field schema, so CapabilityIndex "
-               "cannot detect missing result fields; FabricationGuard will catch "
-               "fabricated values against the Ledger (Auftrag C).")
 class ResultFieldEntzugTest(unittest.TestCase):
     """When the evaluator removes a field from a tool's runtime result
     (hallucination_missing_tool_response task type), the agent must not
@@ -605,6 +612,13 @@ class ResultFieldEntzugTest(unittest.TestCase):
             ],
             # Draft attempts to fabricate a concrete value for the missing field
             drafts=[Draft(response="The estimated arrival time is 42 minutes.")],
+            # C5: FabricationGuard claim extractor finds "42 minutes" in the draft
+            claims=[ClaimExtractionResponse(claims=[
+                FactualClaim(
+                    value="42 minutes",
+                    sentence="The estimated arrival time is 42 minutes.",
+                )
+            ])],
         )
         ledger = Ledger()
         ledger.add_system("You are a car assistant.")
@@ -726,6 +740,254 @@ class OI011FuzzyGateTest(unittest.TestCase):
         self.assertFalse(ctx.intake_rebuttal_done)
         self.assertEqual(ctx.capability_result, "uncovered")
         self.assertEqual(trajectory, [])
+
+
+# ---------------------------------------------------------------------------
+# C7 — FabricationGuard fake tests (Auftrag C)
+# ---------------------------------------------------------------------------
+
+TOOLS_WITH_SUNSHADE_NUMERIC = [
+    {"function": {
+        "name": "open_close_sunshade",
+        "description": "Open or close the sunshade by percentage.",
+        "parameters": {"properties": {"percentage": {"type": "number"}},
+                       "required": ["percentage"]},
+    }},
+    {"function": {
+        "name": "open_close_sunroof",
+        "description": "Open or close the sunroof.",
+        "parameters": {"properties": {"percentage": {"type": "number"}},
+                       "required": ["percentage"]},
+    }},
+]
+
+TOOLS_WITH_ROUTE = [
+    {"function": {
+        "name": "set_new_navigation",
+        "description": "Set a new navigation route.",
+        "parameters": {
+            "properties": {
+                "destination": {"type": "string"},
+                "route_type": {"type": "string"},
+            },
+            "required": ["destination"],
+        },
+    }},
+]
+
+
+def _make_wrong_binding_attr(tool: str, value: str, source_entity: str) -> AttributionResponse:
+    """Attribution that has correct ledger quote but wrong entity (cross-binding)."""
+    return AttributionResponse(attributions=[
+        ArgumentAttribution(
+            argument_name="percentage",
+            argument_value=value,
+            source_quote=f"open the {source_entity} {value}%",
+            target_entity=source_entity,
+        )
+    ])
+
+
+def _make_correct_binding_attr(tool_entity: str, value: str) -> AttributionResponse:
+    """Attribution that has correct ledger quote and correct entity."""
+    return AttributionResponse(attributions=[
+        ArgumentAttribution(
+            argument_name="percentage",
+            argument_value=value,
+            source_quote=f"open the {tool_entity} {value}%",
+            target_entity=tool_entity,
+        )
+    ])
+
+
+class FabricationGuardC7Test(unittest.TestCase):
+    """C7 fake tests for FabricationGuard — no real API calls."""
+
+    # --- C7.1: Sunshade-Fall: Wert im Ledger, falsche Bindung → UNCERTAIN → Senke ---
+
+    def test_wrong_binding_escalates_to_honesty_sink(self):
+        """open_close_sunshade(50) where user only said 'sunroof 50%' → UNCERTAIN × 3 rounds → sink."""
+        # User asked to open the SUNROOF 50% — value 50 is in the ledger but
+        # bound to the wrong entity. FabricationGuard should detect this via C3:
+        # source quote mentions 'sunroof', not 'sunshade'.
+        #
+        # State machine: UNCERTAIN → note → re-plan (×2) → sink on 3rd round.
+        # Each round: 2 AttributionResponse calls (C3 + C4 unanimity gate).
+        wrong_attr = _make_wrong_binding_attr("sunshade", "50", "sunroof")
+        # 3 plan rounds × 2 attribution calls per round = 6 AttributionResponse items
+        fake = FakeLLM(
+            intents=[Intent(
+                user_request_summary="Open the sunroof 50%",
+                required_tools=["open_close_sunshade"],
+                is_state_changing=True,
+                is_ambiguous=False,
+            )],
+            plans=[
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+            ],
+            attributions=[wrong_attr, wrong_attr,  # round 1: C3 + C4
+                          wrong_attr, wrong_attr,  # round 2: C3 + C4
+                          wrong_attr, wrong_attr], # round 3: C3 + C4 → exhausted
+        )
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("open the sunroof 50%")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS_WITH_SUNSHADE_NUMERIC, model="fake")
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+        # Must end in honest text (sink), NOT a tool call to sunshade
+        self.assertIsInstance(action, EmitText)
+        # No sunshade call executed
+        calls_made = [e.tool_name for e in ctx.ledger.entries if e.kind == "tool_call"]
+        self.assertNotIn("open_close_sunshade", calls_made)
+        # Provenance rebuttals maxed out
+        self.assertEqual(ctx.provenance_rebuttals, 2)
+        # Telemetry records UNCERTAIN decisions from FabricationGuard
+        uncertain_decisions = [
+            d for d in ctx.layer_decisions
+            if d.verdict == "UNCERTAIN" and "FabricationGuard" in d.layer
+        ]
+        self.assertGreater(len(uncertain_decisions), 0)
+
+    # --- C7.2: Korrekt gebundener Wert → PASS (Null-FP!) ---
+
+    def test_correct_binding_passes_without_block(self):
+        """open_close_sunshade(50) where user said 'sunshade 50%' → PASS → tool executed."""
+        correct_attr = _make_correct_binding_attr("sunshade", "50")
+        # 1 plan round: 1 attribution call (C3 passes → no C4 needed)
+        fake = FakeLLM(
+            intents=[Intent(
+                user_request_summary="Open the sunshade 50%",
+                required_tools=["open_close_sunshade"],
+                is_state_changing=True,
+                is_ambiguous=False,
+            )],
+            plans=[
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+            attributions=[correct_attr],  # C3 → PASS → no C4
+            claims=[ClaimExtractionResponse(claims=[])],  # C5: no unsupported claims
+        )
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("open the sunshade 50%")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS_WITH_SUNSHADE_NUMERIC, model="fake")
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+            # First action should be EmitToolCalls (sunshade call)
+            self.assertIsInstance(action, EmitToolCalls)
+            self.assertEqual(action.calls[0].tool, "open_close_sunshade")
+            for c in action.calls:
+                ctx.ledger.add_tool_result(c.tool, '{"status": "ok"}', c.call_id)
+            action = machine.resume(ctx)
+        # Should complete successfully with text response
+        self.assertIsInstance(action, EmitText)
+        self.assertEqual(ctx.provenance_rebuttals, 0)
+        # Telemetry: FabricationGuard.C3 recorded PASS
+        pass_decisions = [
+            d for d in ctx.layer_decisions
+            if d.verdict == "PASS" and "FabricationGuard.C3" in d.layer
+        ]
+        self.assertEqual(len(pass_decisions), 1)
+
+    # --- C7.3: Draft mit erfundener Zahl → Satz ersetzt ---
+
+    def test_draft_with_invented_number_gets_sentence_replaced(self):
+        """Sanitize replaces a sentence containing a value not in the ledger."""
+        from track_1_agent_under_test.glassbox.guard import FabricationGuard
+        from track_1_agent_under_test.glassbox.ledger import Ledger as _Ledger
+
+        ledger = _Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("What is the temperature?")
+        ledger.add_tool_result("get_climate", '{"temp": "unknown"}', "call_1")
+
+        fake = FakeLLM(
+            claims=[ClaimExtractionResponse(claims=[
+                FactualClaim(
+                    value="22°C",
+                    sentence="The current temperature is 22°C.",
+                )
+            ])],
+        )
+        draft = "The current temperature is 22°C."
+        with patch.object(glassbox_llm, "call_structured", fake):
+            result = FabricationGuard().sanitize(draft, ledger, model="fake")
+        self.assertNotIn("22°C", result)
+        self.assertIn("sorry", result.lower())
+
+    # --- C7.4: Pflicht-Erwähnung fehlt → Satz ergänzt ---
+
+    def test_route_choice_mention_added_when_missing(self):
+        """If navigation call in ledger but draft omits route choice → sentence appended."""
+        from track_1_agent_under_test.glassbox.guard import FabricationGuard
+        from track_1_agent_under_test.glassbox.ledger import Ledger as _Ledger
+
+        ledger = _Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Navigate to the airport.")
+        ledger.add_tool_call("set_new_navigation", {"destination": "airport"}, "call_1")
+        ledger.add_tool_result("set_new_navigation", '{"status": "ok"}', "call_1")
+
+        fake = FakeLLM(
+            claims=[ClaimExtractionResponse(claims=[])],  # no unsupported claims
+        )
+        draft = "Navigation to the airport has been set."
+        with patch.object(glassbox_llm, "call_structured", fake):
+            result = FabricationGuard().sanitize(draft, ledger, model="fake")
+        self.assertIn("fastest", result.lower())
+
+    # --- C7.5: Korrekte Route — keine spurlose Ergänzung wenn bereits erwähnt ---
+
+    def test_route_choice_not_added_when_already_mentioned(self):
+        """No duplicate route mention when draft already says 'fastest'."""
+        from track_1_agent_under_test.glassbox.guard import FabricationGuard
+        from track_1_agent_under_test.glassbox.ledger import Ledger as _Ledger
+
+        ledger = _Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Navigate to the airport.")
+        ledger.add_tool_call("set_new_navigation", {"destination": "airport"}, "call_1")
+        ledger.add_tool_result("set_new_navigation", '{"status": "ok"}', "call_1")
+
+        fake = FakeLLM(
+            claims=[ClaimExtractionResponse(claims=[])],
+        )
+        draft = "I've set the fastest route to the airport."
+        with patch.object(glassbox_llm, "call_structured", fake):
+            result = FabricationGuard().sanitize(draft, ledger, model="fake")
+        # Should not duplicate "fastest"
+        self.assertEqual(result.lower().count("fastest"), 1)
+
+    # --- C7.6: Telemetrie enthält Schicht + Urteil für jeden Fall ---
+
+    def test_telemetry_records_layer_and_verdict(self):
+        """layer_decisions contains GuardResult entries for capability and policy layers."""
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+            claims=[ClaimExtractionResponse(claims=[])],  # C5
+        )
+        # open_close_sunroof has string argument "position" — no numeric args → C2 skips
+        ctx, _trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        layers = [d.layer for d in ctx.layer_decisions]
+        self.assertIn("CapabilityMatcher", layers)
+        self.assertIn("PolicyChecker.preflight", layers)
+        self.assertIn("FabricationGuard.C5", layers)
+        # All final decisions recorded
+        verdicts = {d.verdict for d in ctx.layer_decisions}
+        self.assertIn("PASS", verdicts)
 
 
 if __name__ == "__main__":

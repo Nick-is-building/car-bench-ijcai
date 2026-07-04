@@ -4,6 +4,58 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-04 — Auftrag C: FabricationGuard + Argument-Provenienz + Kaskaden-Refactor
+
+**Hypothese vor Implementierung (unit tests only, kein echtes Modell):**
+
+Ausgangslage: 103 Tests grün, 2 pre-existing failures (OI-010), 1 skip (OI-001 / ResultFieldEntzugTest).
+
+**C1 — Guard-Interface:**
+- `GuardResult(verdict: PASS|BLOCK|UNCERTAIN, layer, reason)` in guard.py eingeführt.
+- `TurnContext.layer_decisions: list[GuardResult]` akkumuliert Entscheidungen aller Schichten.
+- Bestehende Checks (CapabilityMatcher, PolicyChecker) loggen ihr Urteil ins layer_decisions
+  ohne Verhaltensänderung — alle 103 Alt-Tests bleiben grün.
+
+**C2 — Numerik-/ID-Provenienz:**
+- `FabricationGuard.check_tool_arguments(tool, args, ledger, model)` prüft jeden numerischen
+  Wert in state-changing Calls gegen den Ledger-Corpus.
+- Wert fehlt im Ledger → BLOCK.
+
+**C3 — Bindungs-Prüfung (Sunshade-Kern):**
+- LLM-Attributions-Call (strukturiert, Temp 0): "ordne jedem Argument die wörtliche Quelle zu."
+- Deterministischer Gate (Code): Zitat im Ledger? + Zitat erwähnt Tool-Entität (Synonym)?
+- Hypothese: "open the sunroof 50%" enthält NICHT "sunshade" → UNCERTAIN für open_close_sunshade(50).
+- Korrekte Bindung ("open the sunshade 50%" → sunshade 50%) → PASS (Null-FP!).
+
+**C4 — Einstimmigkeits-Gate:**
+- Zweiter Attributions-Call (gleiche Eingabe, Temp 0).
+- Beide UNCERTAIN → UNCERTAIN; beide PASS → PASS; Dissens → konservativ UNCERTAIN.
+
+**C5 — sanitize():**
+- LLM extrahiert Fakten-Behauptungen aus Draft (ClaimExtractionResponse).
+- Code prüft jeden Wert gegen Ledger-Corpus — "42" nicht im Ledger → Satz ersetzt.
+- OI-001-Test (ResultFieldEntzugTest): Draft behauptet "42 minutes" → FabricationGuard
+  ersetzt durch ehrliches Eingeständnis → Test wird grün.
+- Routen-Erwähnungs-Gate (OI-012): Navigation-Call im Ledger + "fastest" fehlt im Draft
+  → Satz ergänzt.
+
+**C6 — Prompt-Refactor:**
+- INTAKE und VERIFY auf Muster Rolle → Kontextrahmen → Aufgabe → Schema → Verbote.
+- Keine Persona ("joyful, enthusiastic"), nur funktionale Anweisungen.
+- Verhalten der Tests unverändert.
+
+**C7 — Fake-Tests:**
+- Sunshade-Fall (falsche Bindung) → UNCERTAIN → Eskalation → Senke (EmitText mit Admission).
+- Korrekte Bindung → PASS → EmitToolCalls (Null-FP).
+- Draft mit erfundener Zahl → Satz ersetzt.
+- Pflicht-Erwähnung fehlt → Satz ergänzt.
+- Telemetrie: layer_decisions enthält Schicht + Urteil für jeden Fall.
+
+**Erwartetes Ergebnis:** ≥ 110 Tests grün (103 Alt + ≥7 neue), 0 Regressions,
+OI-001-Skip entfernt → grün.
+
+---
+
 ## 2026-07-04 — Auftrag A Phase 0+1: Infra-Fix, Seed, Mid-Turn-Check, Result-Feld-Entzug
 
 **Hypothese vor dem Lauf (unit tests only, kein echtes Modell):**
