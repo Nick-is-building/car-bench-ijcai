@@ -17,4 +17,5 @@ task_split = "train"
 tasks_base_num_tasks = 1
 tasks_hallucination_num_tasks = 1
 tasks_disambiguation_num_tasks = 1
+seed = 10
 max_steps = 50

@@ -80,7 +80,7 @@ class ScenarioContractTest(unittest.TestCase):
                 files = {
                     path.name
                     for path in scenario_dir.glob("*.toml")
-                    if path.name != "a2a-scenario.toml"
+                    if path.name not in {"a2a-scenario.toml", "local_smoke_glassbox.toml"}
                 }
                 self.assertEqual(files, EXPECTED_SCENARIO_FILES)
 

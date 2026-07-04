@@ -6,18 +6,28 @@ oder bewusst akzeptiert werden müssen. Eintrag sofort, wenn erkannt. Erledigtes
 ---
 
 ## OI-001 — Result-Feld-Entzug nicht implementiert
-**Entdeckt:** 2026-07-04  **Stufe:** 3 (Capability-Matcher)  **Priorität:** hoch
+**Entdeckt:** 2026-07-04  **Stufe:** 3/5  **Priorität:** hoch
+**Präzisiert:** 2026-07-04 (Auftrag A, Phase 1)
 
-`hallucination_missing_tool_response` (dritter Hallucination-Typ): der Evaluator
-entfernt ein Antwortfeld aus einem Tool-Schema. Weder `check()` noch `check_step()`
-in `capability.py` prüfen, ob ein erwartetes Antwortfeld vorhanden ist — es gibt keine
-`has_result_field()`-Funktion. Kein Test deckt diesen Fall ab.
+`hallucination_missing_tool_response` (dritter Hallucination-Typ): der Evaluator ersetzt
+ein Feld im Laufzeit-Ergebnis eines Tools durch `"unknown"` (via `remove_result_element()`
+in `tool_manipulation.py`). Das ist KEIN Schema-Eingriff — die Tool-Schemas senden nur
+`parameters` (Input-Schema), kein `responses`/`result`-Schema.
 
-**Risiko:** Wenn der Smoke- oder Kalibrierungslauf einen `hallucination_missing_tool_response`-
-Task zieht, verhält sich der Agent wie bei einem Base-Task (kein Eingeständnis → `HALLUCINATION_ERROR`).
+**Konsequenz für Stufe 3:** `has_result_field(tool, field)` kann NICHT auf Schema-Basis
+in den `CapabilityIndex` eingebaut werden, weil das Ergebnis-Schema schlicht nicht im
+Protokoll vorhanden ist. `check()` und `check_step()` können diesen Entzugstyp strukturell
+nicht abdecken.
 
-**Nächster Schritt:** In Stufe 3 nachimplementieren oder spätestens als Teil von Stufe 5
-(FabricationGuard) über Ledger-Result-Prüfung abfangen.
+**Korrekte Abdeckungsebene:** Stufe 5 — `FabricationGuard.sanitize()` prüft jede Behauptung
+des Drafts gegen den Ledger. Steht ein Wert im Tool-Result als `"unknown"`, darf der Agent
+diesen Wert nicht konkret benennen. Stub-Test angelegt in `test_glassbox_state_machine.py`
+(Klasse `ResultFieldEntzugTest`, `@skip(OI-001)`) — wird grün wenn Stufe 5 live ist.
+
+**Risiko bis Stufe 5:** Zieht Smoke-/Kalibrierungslauf einen `hallucination_missing_tool_response`-
+Task, gibt der Agent eine fabrizierte konkrete Antwort → `HALLUCINATION_ERROR`.
+
+**Nächster Schritt:** Stufe 5 (FabricationGuard) implementieren und Test un-skippen.
 
 ---
 
@@ -60,15 +70,11 @@ fällt dann auf die Intake-Rückfrage zurück — das ist für `internal`-Tasks 
 
 ---
 
-## OI-005 — test_agent_scenario_directories_use_standard_matrix schlägt fehl
-**Entdeckt:** 2026-07-03  **Stufe:** Infrastruktur  **Priorität:** niedrig
+## OI-005 — test_agent_scenario_directories_use_standard_matrix schlägt fehl ✅ BEHOBEN
+**Entdeckt:** 2026-07-03  **Behoben:** 2026-07-04 (Auftrag A, Phase 0)  **Stufe:** Infrastruktur
 
-Der Upstream-Test erwartet exakt die 6 Standard-TOML-Dateien. Unsere
-`local_smoke_glassbox.toml` ist nicht in `EXPECTED_SCENARIO_FILES` (test_scenario_contract.py Z.26–33).
-Kein Logikfehler — der Test kennt unsere Datei schlicht nicht.
-Trivial behebbar: `local_smoke_glassbox.toml` in der Exclusion-Liste neben
-`a2a-scenario.toml` eintragen, oder Upstream-EXPECTED-Set erweitern.
-Wird nicht behoben bis der Fix sich als nötig erweist.
+`local_smoke_glassbox.toml` in Exclusion-Set (`{"a2a-scenario.toml", "local_smoke_glassbox.toml"}`)
+eingetragen. Test schlägt nicht mehr fehl.
 
 ---
 

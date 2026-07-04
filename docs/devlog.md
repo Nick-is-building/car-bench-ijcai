@@ -4,6 +4,35 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-04 — Auftrag A Phase 0+1: Infra-Fix, Seed, Mid-Turn-Check, Result-Feld-Entzug
+
+**Hypothese vor dem Lauf (unit tests only, kein echtes Modell):**
+
+- **A0.1 (OI-005):** `test_agent_scenario_directories_use_standard_matrix` schlägt fehl weil
+  `local_smoke_glassbox.toml` nicht in der Exclusion-Liste steht. Fix: exclusion auf
+  `{"a2a-scenario.toml", "local_smoke_glassbox.toml"}` erweitern. Upstream-Suite wird danach
+  66/67 grün sein (die 2 echten Upstream-Failures bleiben).
+
+- **A0.2 (Seed):** Task-Selektion im Smoke-Szenario ist faktisch bereits deterministisch
+  (`shuffle=False, seed=10` hardcoded im Evaluator). Der Seed ist aber nicht aus der TOML
+  konfigurierbar und daher nicht dokumentiert. Fix: `seed`-Param in `build_args_from_config`
+  via `config.get("seed", 10)` exponieren, `local_smoke_glassbox.toml` bekommt `seed = 10`.
+
+- **A1.1 (Mid-Conversation-Entziehung):** CapabilityIndex wird in `run_turn()` und `resume()`
+  jeweils als lokale Variable neu gebaut (`CapabilityMatcher(ctx.tools)`). Zwischen User-Turns
+  (neuer TurnContext) erhält `ctx.tools` automatisch den aktuellen Katalog. KEIN Freeze am
+  StateMachine-Level. Innerhalb eines Turns (zwischen run_turn und resume) ist `ctx.tools`
+  eingefroren — für die benchmark-seitig verwendeten Entzugstypen kein Problem
+  (Tool/Param-Entzug passiert *vor* der User-Message). Erwartetes Testergebnis: Multi-Turn-Test
+  grün, Turn 2 mit reduziertem Katalog → ehrliche Ablehnung.
+
+- **A1.2 (Result-Feld-Entzug):** Tool-Schemas definieren KEIN responses/result-Schema
+  (nur `parameters` = Input-Schema). `has_result_field()` kann daher NICHT auf Schema-Basis
+  implementiert werden. Abdeckung erfolgt über Stufe-5-FabricationGuard (Auftrag C).
+  OI-001 wird mit diesem Befund präzisiert. Fake-Test wird als @skip (OI-001) angelegt.
+
+---
+
 ## 2026-07-03 — Setup & Projekt-Start
 
 **Aktion:** Fork geklont, Umgebung eingerichtet (uv, Python 3.12, Track-1-Abhängigkeiten).
@@ -125,6 +154,39 @@ Disambiguation: Stub — Stufe 6 ausstehend. Details → `docs/experiments/2026-
 
 **Nächste Schritte:** Stufe 4 (Policy-Compiler) oder Stufe 6 (Disambiguierung).
 Bis 10. Juli müssen Stufen 4 und 5 stehen (MVP-Kette laut Bauplan).
+
+---
+
+## 2026-07-04 — Auftrag A Phase 0+1: Ergebnis
+
+**A0.1 (OI-005):** Exclusion-Set in `test_scenario_contract.py` Z.83 auf
+`{"a2a-scenario.toml", "local_smoke_glassbox.toml"}` erweitert. OI-005 geschlossen.
+`test_scenario_contract.py`: 11/11 grün (3 subtests).
+
+**A0.2 (Seed):** `seed`-Parameter in `build_args_from_config` via
+`config.get("seed", 10)` exponiert. `local_smoke_glassbox.toml` erhält `seed = 10`.
+Task-Selektion war faktisch schon deterministisch (`shuffle=False`), ist jetzt auch im
+TOML dokumentiert und überschreibbar.
+
+**A1.1 (Mid-Conversation-Entziehung):**
+- Befund: CapabilityIndex wird weder am StateMachine noch am CapabilityMatcher gecacht.
+  `run_turn()` und `resume()` bauen jeweils lokal `CapabilityMatcher(ctx.tools)` — vollständig
+  zustandslos. Zwischen User-Turns entsteht ein neuer `TurnContext` mit aktuellem Katalog.
+  Innerhalb eines Turns kann der Aufrufer `ctx.tools` vor `resume()` aktualisieren,
+  und die nächste Plan-Runde nutzt den neuen Index. Kein Code-Fix nötig — Architektur war korrekt.
+- 2 neue Tests:
+  - `test_capability_index_rebuilt_per_turn_not_cached_on_machine`: Turn-1 → Erfolg;
+    Turn-2 (neue ctx, sunroof entfernt) → ehrliche Ablehnung. ✅
+  - `test_resume_uses_ctx_tools_not_stale_first_turn_tools`: ctx.tools Update vor resume →
+    Planner-Request auf entferntes Tool → Ablehnung in derselben Runde. ✅
+
+**A1.2 (Result-Feld-Entzug):**
+- Befund: Tool-Schemas enthalten NUR `parameters` (Input). Kein `responses`/`result`-Schema.
+  `has_result_field()` nicht auf Schema-Basis implementierbar.
+- OI-001 präzisiert: Abdeckung über Stufe-5-FabricationGuard (Auftrag C).
+- 1 Stub-Test `ResultFieldEntzugTest` mit `@skip(OI-001)` angelegt — wird grün wenn Stufe 5 steht.
+
+**Ergebnis:** 25 passed, 1 skipped (OI-001-Stub), 0 failed. Upstream-Suite: +1 Fix (OI-005).
 
 ---
 

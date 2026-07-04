@@ -431,5 +431,170 @@ class PlanStepSchemaTest(unittest.TestCase):
             PlanStep(tool="x", arguments_json="not json")
 
 
+# ---------------------------------------------------------------------------
+# A1.1 — Mid-Conversation-Entziehung: CapabilityIndex pro Turn neu gebaut
+# ---------------------------------------------------------------------------
+
+TOOLS_NO_SUNROOF = [t for t in TOOLS if t["function"]["name"] != "open_close_sunroof"]
+
+
+class MidConversationToolRemovalTest(unittest.TestCase):
+    """Verify that CapabilityIndex is rebuilt from the *current* tool list on
+    each new user turn (new TurnContext), so mid-conversation tool withdrawal
+    is caught deterministically without any LLM call."""
+
+    def test_capability_index_rebuilt_per_turn_not_cached_on_machine(self):
+        """StateMachine holds no cached CapabilityMatcher — each run_turn/
+        resume call creates a fresh index from ctx.tools.
+
+        Turn 1: sunroof present → full happy-path completes.
+        Turn 2: new TurnContext with sunroof absent → CAPABILITY_CHECK → refusal.
+        """
+        machine = StateMachine()
+
+        # Turn 1: sunroof present → execute, then verify/respond
+        fake1 = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[Draft(response="Sunroof opened.")],
+        )
+        ledger1 = Ledger()
+        ledger1.add_system("You are a car assistant.")
+        ledger1.add_user_turn("Open the sunroof.")
+        ctx1 = TurnContext(ledger=ledger1, tools=TOOLS, model="fake")
+        with patch.object(glassbox_llm, "call_structured", fake1):
+            action1 = machine.run_turn(ctx1)
+            self.assertIsInstance(action1, EmitToolCalls)
+            for c in action1.calls:
+                ctx1.ledger.add_tool_result(c.tool, "ok", c.call_id)
+            action1 = machine.resume(ctx1)
+        self.assertIsInstance(action1, EmitText)
+        self.assertEqual(action1.text, "Sunroof opened.")
+
+        # Turn 2: sunroof removed from catalog → new TurnContext → fresh index
+        fake2 = FakeLLM(
+            intents=[intent_ok()],
+            refusals=[FAKE_REFUSAL],
+        )
+        ledger2 = Ledger()
+        ledger2.add_system("You are a car assistant.")
+        ledger2.add_user_turn("Open the sunroof again.")
+        ctx2 = TurnContext(ledger=ledger2, tools=TOOLS_NO_SUNROOF, model="fake")
+        with patch.object(glassbox_llm, "call_structured", fake2):
+            action2 = machine.run_turn(ctx2)
+        self.assertIsInstance(action2, EmitText)
+        self.assertEqual(action2.text, FAKE_REFUSAL.response)
+        self.assertEqual(ctx2.capability_result, "uncovered")
+
+    def test_resume_uses_ctx_tools_not_stale_first_turn_tools(self):
+        """Within a turn: resume() builds matcher from ctx.tools.
+        If caller updates ctx.tools before resume(), the new index takes effect.
+
+        Flow: run_turn emits get_weather call (succeeds). Before resume, caller
+        removes open_close_sunroof from ctx.tools. Planner then requests
+        open_close_sunroof → check_step sees it as uncovered → refusal.
+        """
+        machine = StateMachine()
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(steps=[step("get_weather", {"location": "here"})]),
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+            ],
+            refusals=[FAKE_REFUSAL],
+        )
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Open the sunroof.")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS, model="fake")
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+            self.assertIsInstance(action, EmitToolCalls)
+            for c in action.calls:
+                ctx.ledger.add_tool_result(c.tool, "ok", c.call_id)
+            # Simulate evaluator withdrawing open_close_sunroof before resume
+            ctx.tools = TOOLS_NO_SUNROOF
+            action = machine.resume(ctx)
+        # Planner wanted open_close_sunroof but it's gone from updated index → refusal
+        self.assertIsInstance(action, EmitText)
+        self.assertEqual(action.text, FAKE_REFUSAL.response)
+
+
+# ---------------------------------------------------------------------------
+# A1.2 — Result-Feld-Entzug: dokumentierter Stub-Test (OI-001)
+#
+# Tool-Schemas definieren kein responses/result-Schema. has_result_field()
+# kann daher NICHT auf Schema-Basis implementiert werden.
+# Abdeckung erfolgt über Stufe-5-FabricationGuard (Auftrag C).
+# Dieser Test wird grün sobald guard.sanitize() Fabrication blockiert.
+# ---------------------------------------------------------------------------
+
+TOOLS_WITH_NAV = TOOLS + [
+    {"function": {
+        "name": "get_navigation_eta",
+        "description": "Get estimated time of arrival.",
+        "parameters": {"properties": {"destination": {"type": "string"}},
+                       "required": ["destination"]},
+    }}
+]
+
+
+@unittest.skip("OI-001: Stufe-5 FabricationGuard not yet implemented — "
+               "tool schemas carry no result-field schema, so CapabilityIndex "
+               "cannot detect missing result fields; FabricationGuard will catch "
+               "fabricated values against the Ledger (Auftrag C).")
+class ResultFieldEntzugTest(unittest.TestCase):
+    """When the evaluator removes a field from a tool's runtime result
+    (hallucination_missing_tool_response task type), the agent must not
+    fabricate a concrete value for the missing field."""
+
+    def test_missing_result_field_yields_honest_admission_not_fabricated_value(self):
+        """Tool result has 'eta' replaced with 'unknown'. A fabricating Draft
+        would claim a concrete ETA — the FabricationGuard must block that and
+        produce an honest admission instead."""
+        fake = FakeLLM(
+            intents=[Intent(
+                user_request_summary="What is the ETA to the airport?",
+                required_tools=["get_navigation_eta"],
+                is_state_changing=False,
+                is_ambiguous=False,
+            )],
+            plans=[
+                Plan(steps=[step("get_navigation_eta", {"destination": "airport"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            # Draft attempts to fabricate a concrete value for the missing field
+            drafts=[Draft(response="The estimated arrival time is 42 minutes.")],
+        )
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("How long to the airport?")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS_WITH_NAV, model="fake")
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+            self.assertIsInstance(action, EmitToolCalls)
+            for c in action.calls:
+                # Evaluator returns result with eta field set to "unknown"
+                ctx.ledger.add_tool_result(
+                    c.tool,
+                    '{"eta": "unknown", "route": "highway"}',
+                    c.call_id,
+                )
+            action = machine.resume(ctx)
+        self.assertIsInstance(action, EmitText)
+        # Must NOT contain a fabricated concrete time
+        self.assertNotIn("42 minutes", action.text)
+        # Must contain an honest admission that the information is unavailable
+        self.assertTrue(
+            any(phrase in action.text.lower() for phrase in
+                ["sorry", "unavailable", "don't have", "unable", "unknown"]),
+            f"Expected honest admission, got: {action.text!r}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
