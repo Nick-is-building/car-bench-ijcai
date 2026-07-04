@@ -81,6 +81,7 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
     """
     system = (
         _PLAN_SYSTEM
+        + "\n" + common.SEMANTIC_POLICY_OBLIGATIONS
         + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
         + "\n\n# Tool schemas\n" + common.render_tool_schemas(ctx.tools)
     )
@@ -90,7 +91,8 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
         "role": "user",
         "content": (
             f"# Conversation so far (tool calls/results included)\n{transcript}\n\n"
-            f"# Extracted intent for the current user message\n{intent}\n\n"
+            f"# Extracted intent for the current user message\n{intent}"
+            f"{common.render_policy_notes(ctx.policy_notes)}\n\n"
             f"# Planning round {ctx.plan_round} of this turn\n"
             "Return the next batch of executable tool calls, or an empty steps "
             "list if the request is fully handled."

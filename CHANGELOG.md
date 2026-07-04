@@ -4,6 +4,35 @@ All notable changes to the glassbox CAR-bench agent.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-04
+
+### Added
+- Stufe 4 — Policy-Compiler (Auftrag B, ADR-0004):
+  - `docs/decisions/0004-policy-compiler-regeltabelle.md`: ehrliche Klassifikation
+    aller 19 Policies (9× A voll deterministisch, 7× B teilweise, 3× C inhärent
+    semantisch) inkl. Implementierungs-Status und bewusster Grenzen
+  - `policies.py`: EINE deklarative `RULES`-Tabelle mit 7 generischen Regeltypen
+    (companion_available, value_bound, state_precondition, prior_observation,
+    state_companion, no_parallel, obligation_note); `PolicyChecker.pre_flight()`
+    iteriert generisch — Tool-Namen nur in Daten, nie im Kontrollfluss;
+    Zustandsableitung ausschließlich aus dem Ledger (`derive_known_state`,
+    `TOOL_EFFECTS`, `OBSERVATION_TOOLS`); Null-FP-Disziplin: unbekannter Zustand
+    blockiert nie (höchstens Observation-Injektion mit Schleifenschutz)
+  - `prompts/common.py`: `SEMANTIC_POLICY_OBLIGATIONS` (Klasse C + B-Reste, klar
+    als nicht-maschinell-geprüft markiert) + `render_policy_notes()`;
+    in PLAN- und VERIFY-Prompts verdrahtet
+  - `prompts/policy_check.py`: `generate_policy_block()` — natürliche, ehrliche
+    Policy-Block-Antwort (LLM, Temp 0); `respond.py` delegiert dorthin
+  - `tests/test_glassbox_policies.py`: 28 Tests — pro Regeltyp Verletzungs- und
+    Nicht-Verletzungsfall plus Null-FP-Gesamttest; kein LLM, kein API-Key
+
+### Changed
+- `state_machine.py`: hartcodierter AUT-POL:005-Guard gelöscht und durch den
+  generischen Pre-Flight ersetzt (Refusal / Block / Injektion / Defer / Notes);
+  `TurnContext.policy_notes` neu. Alle vorbestehenden Tests unverändert grün
+  (Generalisierungs-Beweis B3). AUT-POL:005 erzwingt jetzt zusätzlich den
+  Wert-Aspekt (Sunshade 100 % vor Sunroof-Öffnung, behebt OI-003)
+
 ## [0.3.0] — 2026-07-03
 
 ### Added

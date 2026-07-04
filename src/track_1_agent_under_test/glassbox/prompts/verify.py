@@ -40,12 +40,17 @@ degrees Celsius) and 24h time.
 
 def draft_response(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
     """Draft the turn's response from the ledger (LLM, temp 0)."""
-    system = _DRAFT_SYSTEM + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
+    system = (
+        _DRAFT_SYSTEM
+        + "\n" + common.SEMANTIC_POLICY_OBLIGATIONS
+        + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
+    )
     transcript = common.render_transcript(ctx.ledger, include_tools=True)
     messages = [{
         "role": "user",
         "content": (
-            f"# Conversation (tool calls/results included)\n{transcript}\n\n"
+            f"# Conversation (tool calls/results included)\n{transcript}"
+            f"{common.render_policy_notes(ctx.policy_notes)}\n\n"
             "Write the assistant's spoken reply to the last user message, "
             "based strictly on the facts above."
         ),

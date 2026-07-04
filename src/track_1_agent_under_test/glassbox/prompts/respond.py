@@ -34,12 +34,11 @@ def generate_honest_refusal(ctx: "TurnContext") -> str:  # type: ignore[name-def
 
 
 def generate_policy_block(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
-    """
-    Generate natural policy-block response.
-
-    Stufe 4 implementation point.
-    """
-    raise NotImplementedError("respond.generate_policy_block — implement in Stufe 4")
+    """Generate natural policy-block response (Stufe 4)."""
+    from . import policy_check
+    return policy_check.generate_policy_block(
+        ctx.policy_violations, ctx.intent, ctx.model
+    )
 
 
 try:

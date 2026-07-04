@@ -103,6 +103,9 @@ class TurnContext:
     pending_calls: list[PlannedCall] = field(default_factory=list)
     executed_signatures: set[str] = field(default_factory=set)
     policy_violations: list = field(default_factory=list)
+    # markierte Pre-Flight-Notizen (Verschiebungen, Injektionen, Obligationen);
+    # fliessen in die PLAN-Folgerunden und in VERIFY ein (ADR-0004)
+    policy_notes: list[str] = field(default_factory=list)
     clarification_question: str = ""
     final_response: str = ""
     # true if MAX_PLAN_ROUNDS ended the turn before the planner confirmed
@@ -197,25 +200,30 @@ class StateMachine:
                 # everything was a duplicate → planner is looping; stop
                 break
 
-            # AUT-POL:005 deterministic guard (Stufe 3):
-            # Sunroof cannot be opened unless sunshade control is available.
-            # Catches hallucination tasks where open_close_sunshade is removed.
-            if any(c.tool == "open_close_sunroof" for c in calls):
-                sunshade_available = matcher.index.has_tool("open_close_sunshade")
-                sunshade_in_batch = any(c.tool == "open_close_sunshade" for c in calls)
-                sunshade_executed = any(
-                    sig.startswith("open_close_sunshade:")
-                    for sig in ctx.executed_signatures
-                )
-                if not sunshade_available and not sunshade_in_batch and not sunshade_executed:
-                    ctx.capability_missing = True
-                    return self._respond_refusal(ctx)
-
+            # Stufe 4 (ADR-0004): declarative policy pre-flight. May refuse,
+            # block, inject corrective calls, or defer calls to a later round.
             ctx.transition(State.POLICY_CHECK)
-            violations = self._policy_pre_flight(ctx, calls)
-            if violations:
-                ctx.policy_violations = violations
+            pf = self._policy_pre_flight(ctx, calls, matcher)
+            if pf.missing_capability:
+                ctx.policy_violations = pf.missing_capability
+                ctx.capability_missing = True
+                return self._respond_refusal(ctx)
+            if pf.blocked:
+                ctx.policy_violations = pf.blocked
                 return self._respond_policy_block(ctx)
+            ctx.policy_notes.extend(pf.notes)
+            calls = [
+                PlannedCall(
+                    tool=inj.tool,
+                    arguments=inj.arguments,
+                    call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_p{i}",
+                    rationale=f"policy pre-flight injection ({inj.policy_id})",
+                )
+                for i, inj in enumerate(pf.injected)
+            ] + list(pf.kept)
+            if not calls:
+                # whole batch deferred — re-plan with the pre-flight notes
+                continue
 
             ctx.transition(State.EXECUTE)
             for call in calls:
@@ -299,10 +307,7 @@ class StateMachine:
         ctx.intent = result.resolved_intent or ctx.intent
         return None
 
-    def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall]) -> list:
+    def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall], matcher):
         from .policies import PolicyChecker
 
-        try:
-            return PolicyChecker().pre_flight(ctx)
-        except NotImplementedError:  # Stufe 4 pass-through
-            return []
+        return PolicyChecker().pre_flight(calls, ctx.ledger, matcher.index)

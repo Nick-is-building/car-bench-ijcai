@@ -204,3 +204,52 @@ TOML dokumentiert und überschreibbar.
 **Klarstellung Fabrikations-Schutz (zwei Hälften, nicht verwechseln):**
 1. `prompts/verify.py` (Stufe 2, steht): der Draft wird *aus* dem Ledger gezogen — Prompt-seitige Erdung, LLM-formuliert, allein kein Schutz.
 2. `guard.py` (Stufe 5, offen): deterministische Deckungsprüfung *gegen* das Ledger — jede Behauptung braucht eine Quelle, sonst blockiert. Das ist der eigentliche Kern; der Einhängepunkt existiert bereits (`StateMachine._verify_and_respond` ruft `FabricationGuard.sanitize`, bis Stufe 5 Pass-through).
+
+---
+
+## 2026-07-04 — Auftrag B: Policy-Compiler (Stufe 4) — Ergebnis
+
+**B1 (Klassifikation):** Alle 19 Policies aus `wiki.md` wörtlich klassifiziert:
+9× Klasse A (voll deterministisch: 005, 010, 011, 013, 014, 017, 019, 023, 024),
+7× Klasse B (deterministischer Guard + semantischer Rest: 004, 007, 008, 009, 012,
+016, 018), 3× Klasse C (inhärent semantisch: 002, 021, 022). Tabelle mit
+Implementierungs-Status je Policy: `docs/decisions/0004-policy-compiler-regeltabelle.md`.
+
+**B2 (Regel-Tabelle):** `policies.py` neu: EINE deklarative `RULES`-Liste mit 7
+generischen Regeltypen (companion_available, value_bound, state_precondition,
+prior_observation, state_companion, no_parallel, obligation_note).
+`PolicyChecker.pre_flight()` iteriert generisch — Tool-Namen existieren NUR in den
+Daten (Regel-Einträge, TOOL_EFFECTS, OBSERVATION_TOOLS), nie im Kontrollfluss.
+Zustandsableitung ausschließlich aus dem Ledger (SUCCESS-Results); Null-FP-Disziplin:
+unbekannter Zustand blockiert nie, höchstens Beobachtungs-Injektion mit
+Schleifenschutz (max. 1 Observation pro Tool pro Turn).
+
+**B3 (Generalisierungs-Beweis):** AUT-POL:005-Guard aus `state_machine.py` gelöscht,
+ersetzt durch `CompanionAvailableRule`-Daten-Eintrag (+ neuer Wert-Aspekt: Sunshade
+100 % via `inject_when_unknown`). Alle vorbestehenden Tests unverändert grün:
+`test_glassbox_state_machine.py` 25 passed, 1 skipped (OI-001-Stub).
+Zwei beim ersten Testlauf gefundene Bugs behoben: fehlendes `when`-Feld auf
+ValueBound-/ObligationNote-Dataclasses; geblockte Calls werden jetzt aus `kept`
+entfernt (kept = „besteht Pre-Flight").
+
+**B4 (Klasse C markiert):** `SEMANTIC_POLICY_OBLIGATIONS`-Block (deutlich als
+nicht-maschinell-geprüft markiert) in PLAN- und VERIFY-System-Prompts;
+Pre-Flight-Notes werden als markierter Block in die User-Message beider Prompts
+gereicht. Neuer LLM-Baustein `prompts/policy_check.py` (Policy-Block-Antwort);
+`respond.generate_policy_block` delegiert dorthin.
+
+**B5 (Tests pro Regeltyp):** `tests/test_glassbox_policies.py` neu, 28 Tests —
+pro Regeltyp mindestens ein Verletzungsfall (Block/Refusal/Injektion/Defer) und
+ein Nicht-Verletzungsfall (Durchlass unangetastet), plus Null-FP-Gesamttest
+(harmloser Batch bleibt komplett unberührt, notes leer). Kein LLM, kein API-Key.
+
+**Suite gesamt (Messart: pytest tests/, lokal, ein Lauf):** 95 passed, 1 skipped,
+2 failed — beide Failures in `test_a2a_response_contract.py` auf sauberem HEAD
+(3d13e1a) reproduziert, also vorbestehend und unabhängig von Auftrag B (→ OI-010).
+
+**Open-Issues-Pflege:** OI-002 (weitgehend) und OI-003 geschlossen; neu:
+OI-007 (Confirmation-Handshake 004/007/008), OI-008 (LLM-POL:012-Guard),
+OI-009 (AUT-POL:016-Guard), OI-010 (vorbestehende a2a-Failures).
+
+**Nächster Schritt:** B6-Abnahme-Lauf (5 Tasks × 3, Base-Split) — Hypothese-Eintrag
+folgt separat VOR dem Lauf; Kostenschätzung geht zuerst an den User (Freigabe-Gate).

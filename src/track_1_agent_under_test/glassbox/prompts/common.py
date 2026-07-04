@@ -40,6 +40,47 @@ def render_transcript(
     return "\n".join(lines)
 
 
+# SEMANTIC POLICY OBLIGATIONS — deliberately NOT machine-checked (ADR-0004).
+# Class-C policies (and the semantic rest of class-B policies) cannot be
+# enforced deterministically; they are re-stated verbatim-close here, clearly
+# marked, for the PLAN and VERIFY prompts.
+SEMANTIC_POLICY_OBLIGATIONS = """\
+# SEMANTIC POLICY OBLIGATIONS (not machine-checked — YOU must uphold these)
+- LLM-POL:002: metric units only (km/m, degrees Celsius) and 24h time format.
+- LLM-POL:004: if a tool description starts with REQUIRES_CONFIRMATION, first \
+list the intended action details and obtain an explicit expressive user \
+confirmation (yes) BEFORE calling that tool.
+- LLM-POL:007: opening a window beyond 25% while AC is ON requires a \
+confirmation prompt plus an energy-inefficiency warning.
+- LLM-POL:008: if the checked weather is adverse (sunroof: not sunny/cloudy/\
+partly_cloudy; fog lights: not cloudy_and_thunderstorm/cloudy_and_hail), the \
+action requires an explicit expressive user confirmation (yes) first.
+- LLM-POL:012: setting a single seat zone temperature with a resulting \
+difference of more than 3 degrees Celsius to other zones — inform the user.
+- AUT-POL:016: the start of an overall route set must be the current car \
+location.
+- AUT-POL:018: while navigation is active, edit waypoints with the dedicated \
+delete/replace/add tools (never a full new navigation), strictly one edit at \
+a time.
+- LLM-POL:021: whenever a route is presented in detail and it includes toll \
+roads, the user must be informed about the toll.
+- LLM-POL:022: multi-stop route without explicit selection — proactively take \
+the fastest route per segment, say so, offer alternatives, and still mention \
+toll roads.
+"""
+
+
+def render_policy_notes(notes: list[str]) -> str:
+    """Marked pre-flight notes block for PLAN/VERIFY prompts ('' if none)."""
+    if not notes:
+        return ""
+    lines = "\n".join(f"- {n}" for n in notes)
+    return (
+        "\n\n# Policy pre-flight notes (deterministic checker, this turn)\n"
+        f"{lines}\n"
+    )
+
+
 def render_tool_catalog(tools: list[dict]) -> str:
     """Compact one-line-per-tool catalog: name — first sentence of description."""
     lines = []
