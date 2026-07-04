@@ -62,6 +62,34 @@ respond.generate_honest_refusal). Danach Smoke-Test wiederholen — Hallucinatio
 
 ---
 
+## 2026-07-04 — Stufe-3-Review: Lauf-2-Analyse + bekannte Lücken dokumentiert
+
+**Anlass:** Externes Review der Stufen 1–3 hat drei undokumentierte Lücken aufgedeckt.
+
+**Lauf-2-Rohanalyse (Base=0 %, Disamb=0 %, Hall=100 %):**
+Beide Misserfolge sind inhaltliche Agentenfehler, kein Infrastrukturproblem
+(`error: null`, `traceback: null`, alle Turns vollständig durchgelaufen).
+
+- **Base (base_0):** Planner parallelisierte `open_close_sunshade(50%)` und
+  `open_close_sunroof(50%)` in einem Batch. GT erwartet `sunshade=100%/sunroof=50%`.
+  Reward-Diagnose: `r_actions_final=0.0`, alle anderen Komponenten grün.
+  Ursache: kein deterministischer Guard, der Sunshade auf 100 % erzwingt —
+  der Planner hat den Sunroof-Wert auf die Sunshade übertragen.
+
+- **Disambiguation (disambiguation_0, Typ: disambiguation_internal):**
+  user_preference `"Default value to open the sunroof is 50%, never wants to open
+  the sunroof fully"` wurde ignoriert. Agent öffnete Sunroof auf 100 % statt 50 %.
+  Stufe-6-Stub liest keine Preferences → immer falsch bei `disambiguation_internal`.
+
+**Bekannte Implementierungslücken nach Review (Details → docs/open_issues.md):**
+- `hallucination_missing_tool_response` (Result-Feld-Entzug) nicht implementiert.
+- `check()`/`check_step()` sind deterministisch (Dict-Lookup, kein LLM) —
+  gilt aber nur für Tool- und Parameter-Entzug, nicht für Result-Feld-Entzug.
+- AUT-POL:005 ist der einzige deterministische Policy-Guard; 18 Policies
+  hängen an LLM-Planner + Gemini-Judge; Varianz durch Judge nicht quantifiziert.
+
+---
+
 ## 2026-07-03 — Stufe 3: Capability-Matcher implementiert + Stabilitätstest
 
 **These (vor dem Lauf):** AUT-POL:005-Guard macht Hallucination-Erkennung deterministisch —
