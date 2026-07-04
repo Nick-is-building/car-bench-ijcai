@@ -289,3 +289,69 @@ liegt vor (2026-07-04).
 
 **Lauf-Disziplin:** nohup > _local/runs/stufe4_abnahme.log, kein Live-Tail;
 Auswertung einmalig nach Abschluss. Ergebnis-Eintrag folgt separat.
+
+---
+
+## 2026-07-04 — B6-Abnahme-Lauf Stufe 4: Ergebnis + Fehleranalyse
+
+**Ergebnis (Messart: Pass^k über 3 Trials, n = 5 Base-Tasks × 3 = 15 Task-Läufe,
+Agent claude-sonnet-4-6, User-Sim + Judge gemini-2.5-flash, seed 10):**
+
+| Metrik | Wert |
+|---|---|
+| Pass^1 = Pass^2 = Pass^3 | **60.0 %** (base_0, base_16, base_20 je 3/3 ✓; base_10, base_56 je 0/3 ✗) |
+| policy_aut_errors | **0 in 15/15** Läufen (deterministischer AUT-Teil hielt) |
+| r_policy < 1.0 | **1/15** (base_10 T2: LLM-Judge, fehlende Confirmation, s. u.) |
+| plan_bound_hit | 0 Treffer |
+| Kosten / Dauer | $0.985 Agent / 660.8 s |
+
+**Hypothesen-Status (ehrlich):**
+1. r_policy nirgends < 1.0 — ❌ **widerlegt**: base_10 T2 r_policy=0.0. Ursache
+   ist aber kein AUT-Fehler (policy_aut_errors=[] in allen 15), sondern der
+   LLM-POL:008-Anteil von AUT-POL:009: Wetter „cloudy" ⇒ explizite
+   User-Bestätigung vor set_fog_lights nötig; Agent setzte ohne Nachfrage.
+   Das ist exakt die in ADR-0004 dokumentierte Klasse-B-Grenze → OI-007 bestätigt.
+2. Base nicht schlechter — auf der überlappenden Menge (base_0, Stufe-3-Smoke)
+   nicht schlechter (3/3). Gesamtbild wegen anderem Task-Mix nicht 1:1 vergleichbar.
+3. plan_bound_hit nie — ✅ bestätigt (0 Treffer im Orchestrator-Log).
+4. Kein Refusal — ❌ **widerlegt**: base_10 T0/T1 und base_56 T0/T1/T2 endeten
+   mit falschem „nicht verfügbar"-Refusal (end_conversation_keyword=OUT_OF_SCOPE).
+
+**Abnahme-Kriterium B6 (r_policy nie <1.0, Base nicht schlechter): NICHT bestanden.**
+
+**Root-Cause-Analyse (deterministische Repro, kein Judge-Nachbau):**
+
+1. **AUT-POL:019-False-Positive (base_56 T2) — Bug, behoben.**
+   `_eval_state_precondition` prüfte das Prädikat auf dem projizierten Zustand
+   INKLUSIVE des Effekts des Trigger-Calls selbst: `navigation_delete_waypoint`
+   dekrementiert `nav_waypoint_count` 3→2, das 019-Prädikat (≥3) schlug fehl —
+   der Delete hat sich selbst blockiert. Repro: echter Katalog + Ledger aus der
+   T2-Trajektorie → `blocked=[AUT-POL:019]`. Fix: `projected_before(call)` —
+   Preconditions werden auf dem Zustand VOR dem Call geprüft (Injections +
+   vorangehende Batch-Calls). 2 Regressionstests (Pass mit Zwischenstopp;
+   zweiter Delete im selben Batch weiterhin blockiert).
+2. **Falsche Capability-Refusals (base_10 T0/T1; base_56 T0/T1 + T2-Ende) —
+   LLM-Pfad, Guard nachgerüstet.** Pre-Flight per Repro entlastet
+   (has_tool=True für alle GT-Tools mit echtem A2A-Katalog; Pre-Flight injiziert
+   in der Repro korrekt get_weather + set_head_lights_low_beams). Per Ausschluss
+   stammt das Refusal aus dem LLM-Pfad: Planner-`capability_missing`-Flag bzw.
+   Intake-required_tools — beides wurde nie deterministisch gegen den Katalog
+   verifiziert. Fix: Plan-Schema erhält `missing_tools` (exakte Namen); das Flag
+   wird nur geehrt, wenn ein benanntes Tool wirklich nicht im Index ist; sonst
+   PLAN-GUARD-Note + Re-Plan (max. 2, dann ehrliches VERIFY-Ende statt Refusal).
+   Prompt verlangt Re-Scan der Schemas vor jedem Claim. 3 Tests (1 angepasst,
+   2 neu). **Restrisiko** (nicht deterministisch schließbar): erfindet das LLM
+   einen Tool-Namen, ist „Name nicht im Index" von „Capability fehlt wirklich"
+   nicht unterscheidbar → OI-011.
+3. **Fehlende Wetter-Confirmation (base_10 T2)** — bekanntes OI-007
+   (Confirmation-Handshake über Turn-Grenzen), jetzt empirisch belegt. Kein
+   Quick-Fix in dieser Runde; gehört zu Stufe-5/6-Arbeit.
+
+**Lehren für die Lauf-Disziplin:** Agent-seitige Logs (state_trace, Refusal-Quelle)
+wurden vom nohup-Orchestrator-Log nicht erfasst — die base_10/56-T0/T1-Zuordnung
+Intake vs. Planner blieb deshalb Ausschluss-Diagnose. Vor dem nächsten Lauf
+Agent-Server-Log in Datei umleiten (in OI-011 festgehalten).
+
+**Konsequenz:** Beide deterministischen Fixes sind committet (Tests: 99 passed,
+1 skipped, 2 vorbestehende a2a-Failures = OI-010). Wiederholung des
+Abnahme-Laufs erst nach erneuter User-Freigabe (Kosten ~$1).

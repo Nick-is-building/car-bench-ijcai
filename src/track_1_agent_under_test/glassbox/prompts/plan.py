@@ -39,6 +39,9 @@ class Plan(BaseModel):
     steps: list[PlanStep] = Field(default_factory=list)
     done_reason: str = ""  # why no further steps are needed (when steps is empty)
     capability_missing: bool = False  # True when a required tool is absent from schemas
+    # exact tool names that were required but absent (mandatory with
+    # capability_missing=true — the claim is verified against the schemas)
+    missing_tools: list[str] = Field(default_factory=list)
 
 
 _PLAN_SYSTEM = """\
@@ -67,10 +70,16 @@ state-reading calls (get_* tools) while the requested state changes \
 (open_*, set_*, close_*, etc.) have not been executed yet.
 - CRITICAL — missing capability: if completing the request requires a tool or \
 prerequisite step that is NOT in the provided tool schemas, do NOT improvise a \
-workaround. Set capability_missing=true, return steps=[], and explain in \
-done_reason. A workaround that skips a required step is a fabrication. This \
-includes prerequisite steps: if opening the sunroof requires opening the sunshade \
-first but open_close_sunshade is absent from schemas, set capability_missing=true.
+workaround. Set capability_missing=true, return steps=[], list the exact tool \
+names you looked for in missing_tools, and explain in done_reason. A workaround \
+that skips a required step is a fabrication. This includes prerequisite steps: \
+if opening the sunroof requires opening the sunshade first but \
+open_close_sunshade is absent from schemas, set capability_missing=true.
+- Before claiming a missing capability, RE-SCAN the full tool schemas: the tool \
+you need may exist under a different name than your first guess. A prerequisite \
+whose tool IS in the schemas is simply planned as a step, never refused. Your \
+missing_tools claim is verified against the schemas; a claim naming tools that \
+exist will be rejected.
 """
 
 
@@ -99,8 +108,26 @@ def build_plan(ctx: "TurnContext") -> list[dict]:  # type: ignore[name-defined]
         ),
     }]
     result = llm.call_structured(messages, Plan, model=ctx.model, system=system)
+    ctx.capability_claim_rebutted = False
     if result.capability_missing:
-        ctx.capability_missing = True
+        # deterministic guard: honor the claim only if a named tool is truly
+        # absent from the schemas (B6 root cause: false capability refusals)
+        from ..capability import CapabilityIndex
+        index = CapabilityIndex(ctx.tools)
+        claimed = [t.strip() for t in result.missing_tools if t and t.strip()]
+        truly_missing = [t for t in claimed if not index.has_tool(t)]
+        if truly_missing:
+            ctx.capability_missing = True
+        else:
+            ctx.capability_claim_rebutted = True
+            names = ", ".join(claimed) if claimed else "(no tool named)"
+            note = (
+                "PLAN-GUARD: capability_missing claim rejected — the named "
+                f"tools exist in the schemas or none were named: {names}. "
+                "Plan the required steps using the exact schema names."
+            )
+            if note not in ctx.policy_notes:
+                ctx.policy_notes.append(note)
     return [
         {"tool": s.tool, "arguments": s.arguments, "rationale": s.rationale}
         for s in result.steps

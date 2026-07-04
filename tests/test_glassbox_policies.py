@@ -217,6 +217,32 @@ class StatePreconditionTest(unittest.TestCase):
         pf = pre_flight([call("navigation_delete_destination", {})], ledger)
         self.assertIn("AUT-POL:019", policy_ids(pf.blocked))
 
+    def test_delete_waypoint_passes_with_intermediate_stop(self):
+        # B6 regression (base_56): the precondition must be evaluated on the
+        # state BEFORE the call — its own decrement must not veto it.
+        ledger = make_ledger()
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": True,
+                 "waypoints_id": ["start", "stop1", "dest"]})
+        c = call("navigation_delete_waypoint", {"waypoint_id": "stop1"})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.blocked, [])
+        self.assertEqual(pf.kept, [c])
+
+    def test_second_delete_in_same_batch_still_blocked(self):
+        # After the first delete the projected count drops to 2 — a second
+        # delete in the same batch would empty the intermediate stops.
+        ledger = make_ledger()
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": True,
+                 "waypoints_id": ["start", "stop1", "dest"]})
+        first = call("navigation_delete_waypoint", {"waypoint_id": "stop1"}, "c1")
+        second = call("navigation_delete_destination", {}, "c2")
+        pf = pre_flight([first, second], ledger)
+        self.assertIn("AUT-POL:019", policy_ids(pf.blocked))
+        self.assertIn(first, pf.kept)
+        self.assertNotIn(second, pf.kept)
+
 
 # ---------------------------------------------------------------------------
 # prior_observation — AUT-POL:009 weather check before sunroof / fog lights

@@ -51,6 +51,7 @@ TOOLS = [
 TOOLS_NO_SUNSHADE = [t for t in TOOLS if t["function"]["name"] != "open_close_sunshade"]
 
 FAKE_REFUSAL = Refusal(response="Sorry, I'm unable to do that with the controls available.")
+FAKE_DRAFT = Draft(response="Done, all set.")
 
 
 def step(tool: str, args: dict) -> PlanStep:
@@ -222,18 +223,54 @@ class CapabilityCheckIntegrationTest(unittest.TestCase):
         self.assertEqual(ctx.capability_result, "uncovered")
 
     def test_planner_capability_missing_signal_yields_refusal(self):
-        """Planner sets capability_missing=True → state machine routes to refusal."""
+        """Verified claim (named tool truly absent) → refusal."""
         fake = FakeLLM(
             intents=[intent_ok()],
             plans=[Plan(steps=[], capability_missing=True,
+                        missing_tools=["open_close_sunshade"],
                         done_reason="missing_capability: open_close_sunshade")],
             refusals=[FAKE_REFUSAL],
         )
-        ctx, trajectory, action = run_scripted(fake)
+        ctx, trajectory, action = run_scripted(fake, tools=TOOLS_NO_SUNSHADE)
         self.assertEqual(trajectory, [])
         self.assertIsInstance(action, EmitText)
         self.assertEqual(action.text, FAKE_REFUSAL.response)
         self.assertTrue(ctx.capability_missing)
+
+    def test_false_capability_claim_is_rebutted_and_replanned(self):
+        """B6 root cause: claim names a tool that EXISTS → no refusal, re-plan."""
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[
+                Plan(steps=[], capability_missing=True,
+                     missing_tools=["open_close_sunroof"]),
+                Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertFalse(ctx.capability_missing)
+        self.assertEqual(ctx.capability_rebuttals, 1)
+        self.assertTrue(any("PLAN-GUARD" in n for n in ctx.policy_notes))
+        self.assertEqual([c[0] for batch in trajectory for c in batch],
+                         ["open_close_sunroof"])
+        self.assertIsInstance(action, EmitText)
+
+    def test_unnamed_capability_claim_is_bounded_then_turn_ends(self):
+        """Repeated unverifiable claims never refuse and never loop forever."""
+        claim = Plan(steps=[], capability_missing=True)  # no missing_tools
+        fake = FakeLLM(
+            intents=[intent_ok()],
+            plans=[claim, claim.model_copy(deep=True), claim.model_copy(deep=True)],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertFalse(ctx.capability_missing)
+        self.assertEqual(ctx.capability_rebuttals, 2)
+        self.assertEqual(trajectory, [])
+        self.assertIsInstance(action, EmitText)  # honest verify, not refusal
+        self.assertNotEqual(action.text, FAKE_REFUSAL.response)
 
     def test_aut_pol_005_sunroof_without_sunshade_yields_refusal(self):
         """AUT-POL:005 guard: sunroof planned, open_close_sunshade absent → capability_missing refusal."""

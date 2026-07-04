@@ -99,6 +99,10 @@ Zustandsmaschinen-Erweiterung (Pending-Confirmation-Zustand über Turn-Grenzen)
 plus semantische Bestätigungs-Erkennung. In v1 nur als markierte Obligation-Note
 (007) bzw. Prompt-Obligation (004/008) abgedeckt.
 
+**Empirisch belegt (B6-Lauf 2026-07-04):** base_10 T2 — Wetter „cloudy",
+Agent setzte set_fog_lights ohne Bestätigungs-Turn → policy_llm_error,
+r_policy=0.0. Einziger r_policy-Verlust des Laufs (AUT-Teil: 0 Fehler in 15/15).
+
 **Nächster Schritt:** eigener Auftrag: Pending-Confirmation-Zustand im TurnContext/
 Ledger persistieren; deterministischer Gate „Tool erst nach Bestätigungs-Turn".
 
@@ -140,3 +144,32 @@ Auftrag B / Stufe 4. Betrifft die Fehlerprotokollierung im A2A-Response-Contract
 nicht den Glassbox-Agenten.
 
 **Nächster Schritt:** getrennt untersuchen; nicht mit Stufe-4-Arbeit vermischen.
+
+---
+
+## OI-011 — Falsche Capability-Refusals aus dem LLM-Pfad (Intake/Planner)
+**Entdeckt:** 2026-07-04 (B6-Abnahme-Lauf)  **Stufe:** 3/4  **Priorität:** hoch
+
+Im B6-Lauf endeten base_10 T0/T1 und base_56 T0/T1 (+T2-Ende) mit falschen
+„nicht verfügbar"-Refusals (OUT_OF_SCOPE), obwohl alle GT-Tools im A2A-Katalog
+standen. Pre-Flight per deterministischer Repro entlastet (has_tool=True,
+korrekte Injektionen). Quelle per Ausschluss: Planner-`capability_missing`-Flag
+bzw. Intake-required_tools — beide wurden nie gegen den Katalog verifiziert.
+
+**Teil-Fix (committet):** Plan-Schema `missing_tools` + deterministischer
+PLAN-GUARD — Flag wird nur geehrt, wenn ein benanntes Tool wirklich nicht im
+Index ist; widerlegter Claim → Note + Re-Plan (max. 2), sonst ehrliches
+VERIFY-Ende statt Refusal.
+
+**Restrisiko (offen):**
+1. Erfindet das LLM einen Tool-Namen (z. B. „navigation_remove_waypoint"),
+   ist „Name nicht im Index" von „Capability fehlt wirklich" deterministisch
+   nicht unterscheidbar — Refusal bleibt dann möglich (base_56-T0/T1-Muster).
+2. Intake-Refusal-Pfad (CapabilityMatcher.check auf required_tools) hat noch
+   keinen analogen Guard.
+3. Diagnose-Lücke: Agent-seitige Logs (state_trace, Refusal-Quelle) fehlten im
+   nohup-Orchestrator-Log; Intake-vs-Planner blieb Ausschluss-Diagnose.
+
+**Nächster Schritt:** Agent-Server-Logs bei Eval-Läufen in Datei umleiten;
+Intake-Guard analog PLAN-GUARD prüfen; Wirkung im nächsten freigegebenen
+Abnahme-Lauf messen (base_10/base_56 erneut).

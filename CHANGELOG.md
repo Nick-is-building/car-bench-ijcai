@@ -4,6 +4,27 @@ All notable changes to the glassbox CAR-bench agent.
 
 ## [Unreleased]
 
+### Fixed
+- B6-Abnahme-Lauf (Pass^3 60.0 %, n=5 Base-Tasks × 3 Trials) deckte zwei Fehler auf
+  (Analyse in `docs/devlog.md`, Restrisiken in OI-011):
+  - `policies.py`: AUT-POL:019-False-Positive — `_eval_state_precondition` prüfte
+    das Prädikat auf dem projizierten Zustand INKLUSIVE des Trigger-Call-Effekts
+    (`navigation_delete_waypoint` blockierte sich selbst: count 3→2 < 3). Neu:
+    `projected_before(call)` — Preconditions gelten für den Zustand VOR dem Call.
+    2 Regressionstests (deterministische Repro aus base_56 T2)
+  - `prompts/plan.py` + `state_machine.py`: falsche Capability-Refusals — das
+    Planner-`capability_missing`-Flag wurde nie gegen den Katalog verifiziert.
+    Neu: `missing_tools`-Feld im Plan-Schema; PLAN-GUARD ehrt das Flag nur, wenn
+    ein benanntes Tool wirklich nicht im Index ist, sonst Note + Re-Plan (max. 2),
+    danach ehrliches VERIFY-Ende statt Refusal. 3 Tests (1 angepasst, 2 neu)
+
+### Added
+- `docs/devlog.md`: B6-Ergebniseintrag — Hypothesen H1/H4 widerlegt, H3 bestätigt;
+  policy_aut_errors=0 in 15/15 (deterministischer AUT-Teil hielt); Abnahme nicht
+  bestanden, Wiederholungslauf erst nach erneuter Freigabe
+- `docs/open_issues.md`: OI-011 (LLM-Pfad-Refusals, Intake-Guard + Agent-Logs offen);
+  OI-007 empirisch belegt (base_10 T2, fehlende Wetter-Confirmation)
+
 ## [0.4.0] — 2026-07-04
 
 ### Added

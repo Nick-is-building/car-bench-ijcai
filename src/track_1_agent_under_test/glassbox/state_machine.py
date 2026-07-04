@@ -99,6 +99,10 @@ class TurnContext:
     intent: dict = field(default_factory=dict)
     capability_result: str = ""          # "covered" | "uncovered" | "ambiguous"
     capability_missing: bool = False     # set by planner when required tool is absent
+    # planner claimed a missing capability, but every named tool exists in the
+    # schemas (or none was named) — claim rejected, re-plan (bounded)
+    capability_claim_rebutted: bool = False
+    capability_rebuttals: int = 0
     plan_round: int = 0
     pending_calls: list[PlannedCall] = field(default_factory=list)
     executed_signatures: set[str] = field(default_factory=set)
@@ -172,6 +176,11 @@ class StateMachine:
             if not steps:
                 if ctx.capability_missing:
                     return self._respond_refusal(ctx)
+                if ctx.capability_claim_rebutted and ctx.capability_rebuttals < 2:
+                    # false missing-capability claim — re-plan with the
+                    # PLAN-GUARD note instead of refusing (B6 root cause)
+                    ctx.capability_rebuttals += 1
+                    continue
                 break
 
             calls: list[PlannedCall] = []

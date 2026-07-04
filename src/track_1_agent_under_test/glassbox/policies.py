@@ -624,6 +624,17 @@ class _Env:
         ]
         return _project(self.state, batch)
 
+    def projected_before(self, call) -> dict:
+        """State right before `call` executes: injections run first, then the
+        kept calls preceding it. The call's own effect must NOT count towards
+        its precondition (a delete would otherwise veto itself)."""
+        batch = [_InjectedCall(i.tool, i.arguments) for i in self.result.injected]
+        for c in self.result.kept:
+            if c is call:
+                break
+            batch.append(c)
+        return _project(self.state, batch)
+
     def inject(self, tool: str, arguments: dict, policy_id: str, note: str) -> None:
         sig = f"{tool}:{json.dumps(arguments, sort_keys=True)}"
         already = (
@@ -691,7 +702,7 @@ def _eval_state_precondition(rule: StatePreconditionRule, env: _Env) -> None:
     for call in _triggers(rule, env):
         if call not in env.result.kept:
             continue
-        projected = env.projected()
+        projected = env.projected_before(call)
         unknown = [f for f in rule.required_fields if f not in projected]
         if unknown:
             if rule.observe_tool and env.can_observe(rule.observe_tool):
