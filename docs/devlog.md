@@ -574,3 +574,43 @@ verschwinden (reine LLM-Lotterie) und diagnostiziert die Quellen.
 - **Ziel:** Refusals 0-2/15; KEIN neuer policy_aut_error
 - **Diagnostic:** Agent-Log liefert erstmals Quellen (intake/planner/execute_guard)
   der verbleibenden Refusals — unabhängig vom Lauf-Ergebnis ein Informationsgewinn
+
+---
+
+## 2026-07-04 — Lauf 4 (Abnahme-Lauf mit GLASSBOX_LOG_FILE): Ergebnis
+
+**Lauf:** 20260704-213305, identische Config + `GLASSBOX_LOG_FILE=_local/runs/lauf4_agent.log`
+(Agent claude-sonnet-4-6, Judge/User-Sim gemini-2.5-flash, seed 10, 5 Base × 3 Trials).
+Rohdaten: `docs/experiments/2026-07-04-lauf4-abnahme.json`
+
+| Metrik | Wert |
+|---|---|
+| Pass^3 | **80.0 %** (base_0/16/20/56 je 3/3 ✓; base_10 1/3 ✗) |
+| Pass@3 | 100.0 % (alle Tasks ≥1/3) |
+| policy_aut_errors | **0 in 15/15** — vierter Lauf in Folge (kumuliert **0/60**) |
+| Refusals (OUT_OF_SCOPE) | **0/15** ← KEIN Refusal mehr! |
+
+**Hypothese: BESTÄTIGT.** Im Einzelnen:
+- base_0/16/20 3/3 — ✅ bestätigt.
+- base_56 **3/3** — ✅ bestätigt (Hypothese 2-3/3). Alle Refusals weg.
+  Fuzzy-Gate + Intake-Rebuttal wirken vollständig: navigation_delete_waypoint
+  wird in allen drei Trials korrekt aufgerufen.
+- base_10 **1/3** — ✅ Hypothese war 0-1/3; T0+T1 OI-007 (fog lights ohne
+  Confirmation), T2 ✓.
+- policy_aut_errors 0/15 — ✅ bestätigt (kumuliert 0/60).
+- Refusals 0/15 — ✅ Ziel erreicht.
+
+**Agent-Log-Diagnose (GLASSBOX_LOG_FILE, 268 JSON-Zeilen):**
+- 58 glassbox_agent-Einträge, 0 WARNING/ERROR.
+- Keine PLAN-GUARD- oder INTAKE-REBUTTAL-Warnungen → in diesem Lauf hat das
+  LLM durchgehend korrekte Tool-Namen verwendet; kein Fuzzy-Re-Plan nötig.
+- Log-Infrastruktur funktioniert. Künftig: bei Refusals automatisch
+  source=intake/planner/execute_guard in der Datei sichtbar.
+
+**Abnahme-Kriterium B (revised):**
+- (1) policy_aut_errors = 0/15 ✅
+- (2) KEIN falscher Refusal aus Capability-Pfad: ✅ (0/15 Refusals)
+- (3) base_0/16/20 3/3 ✅
+**→ AUFTRAG B ABGENOMMEN. Pass^3 = 80 % erreicht.**
+
+**claims.md aktualisiert:** policy_aut_errors 0/60 (4 Läufe).

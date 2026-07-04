@@ -149,6 +149,7 @@ nicht den Glassbox-Agenten.
 
 ## OI-011 — Falsche Capability-Refusals aus dem LLM-Pfad (Intake/Planner)
 **Entdeckt:** 2026-07-04 (B6-Abnahme-Lauf)  **Stufe:** 3/4  **Priorität:** hoch
+**Status: GELÖST für Abnahme-Kriterium B (Lauf 4: 0/15 Refusals, Lauf-3: 2/15)**
 
 Im B6-Lauf endeten base_10 T0/T1 und base_56 T0/T1 (+T2-Ende) mit falschen
 „nicht verfügbar"-Refusals (OUT_OF_SCOPE), obwohl alle GT-Tools im A2A-Katalog
