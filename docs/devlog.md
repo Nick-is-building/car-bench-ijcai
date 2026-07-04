@@ -553,3 +553,24 @@ Rohdaten: `docs/experiments/2026-07-04-lauf3-oi011.json`
 - (2) KEIN falscher Refusal aus Capability-Pfad: ❌ (2 Refusals verbleiben)
 - (3) base_0/16/20 3/3 ✓
 **→ B NICHT abgenommen. Debugging-Deckel erreicht. STOPP gemäß Auftrag.**
+
+---
+
+## 2026-07-04 — Hypothese für Lauf 4 (VOR dem Start committet)
+
+**Änderung:** `logging_utils.py` — `GLASSBOX_LOG_FILE`-Datei-Sink (JSON, DEBUG).
+Agent-seitige Logs landen jetzt in `_local/runs/lauf4_agent.log` auch wenn
+der Subprocess-stderr von car-bench-run verworfen wird. Kein Fix an der
+Capability-Logik — Lauf 4 misst, ob die 2 verbleibenden Refusals stochastisch
+verschwinden (reine LLM-Lotterie) und diagnostiziert die Quellen.
+
+**Hypothese:**
+- base_0, base_16, base_20: 3/3 (deterministisch, unverändert)
+- base_56: 2-3/3 (T0 Refusal war in Lauf 3 stochastisch; kann bei anderer
+  Stochastik durch Fuzzy-Gate gerettet werden → 3/3 möglich)
+- base_10: 0/3 (OI-007 + OI-011 = zwei unabhängige Löcher, beide ungefixed;
+  T1 Refusal war in Lauf 3 zufällig, kann wandern)
+- **Pass^3: 60-80 %** (60 % wenn base_56 T0 wieder Refusal; 80 % wenn base_56 3/3)
+- **Ziel:** Refusals 0-2/15; KEIN neuer policy_aut_error
+- **Diagnostic:** Agent-Log liefert erstmals Quellen (intake/planner/execute_guard)
+  der verbleibenden Refusals — unabhängig vom Lauf-Ergebnis ein Informationsgewinn

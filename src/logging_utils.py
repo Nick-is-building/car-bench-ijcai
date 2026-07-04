@@ -75,6 +75,20 @@ def configure_logger(role: str, context: str = None, serialize: bool = False):
             colorize=True,
         )
     
+    # Optional file sink: set GLASSBOX_LOG_FILE=<path> to capture agent-side
+    # logs even when the subprocess stdout/stderr is discarded (e.g. DEVNULL).
+    # Uses JSON + DEBUG level so all structured extras (source, tool names, …)
+    # survive and can be grepped for refusal diagnostics (OI-011 H-R3).
+    log_file = os.getenv("GLASSBOX_LOG_FILE")
+    if log_file:
+        logger.add(
+            log_file,
+            level="DEBUG",
+            mode="a",
+            serialize=True,   # JSON: includes all extra fields
+            enqueue=True,     # thread-safe under async uvicorn workers
+        )
+
     if context:
         return logger.bind(role=role, context=context)
     else:
