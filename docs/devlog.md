@@ -399,3 +399,57 @@ T2-Fail von damals war Judge-Rauschen — als Judge-Varianz-Beobachtung notieren
 Konfiguration identisch zum ersten B6-Lauf: `local_stufe4_abnahme.toml`
 (5 feste Base-Task-IDs × 3 Trials, Agent claude-sonnet-4-6,
 User-Sim + Judge gemini-2.5-flash, seed 10).
+
+## 2026-07-04 — B6-Wiederholungslauf: Ergebnis gegen Hypothese (Lauf 20260704-194848)
+
+**Messung** (Pass^k, n=5 Base-Tasks × 3 Trials, Agent claude-sonnet-4-6,
+User-Sim + Judge gemini-2.5-flash, seed 10, 640.9 s; Rohdaten:
+`docs/experiments/2026-07-04-b6-wiederholung-raw.json`):
+
+| Metrik | Wert |
+|---|---|
+| Pass^1 = Pass^2 = Pass^3 | **60.0 %** (base_0, base_16, base_20 je 3/3 ✓; base_10, base_56 je 0/3 ✗) |
+| policy_aut_errors | **0 in 15/15** — zweiter Lauf in Folge (kumuliert 0/30) |
+| Refusals (OUT_OF_SCOPE) | 3/15 (vorher 5/15): base_10 T2, base_56 T0/T1 — alle im ERSTEN Turn, 0 Tool-Calls |
+
+**Hypothese: NICHT bestätigt (erwartet 80 %, gemessen 60 %).** Im Einzelnen:
+- base_0/16/20 bleiben 3/3 — ✅ bestätigt.
+- base_56 3/3 — ❌: T0/T1 wieder falsche Refusals, T2 neuer LLM-Judge-Fail.
+  ABER: das AUT-POL:019-FP-Muster ist weg (Fix 1 wirkt — T2 führte
+  `navigation_delete_waypoint` erfolgreich aus, r_actions=1.0, aut_err=[]).
+- base_10 2/3 — ❌: 0/3. OI-007 (Wetter-Confirmation) traf diesmal T0 UND T1
+  (r_policy=0.0, policy_llm_errors exakt der LLM-POL:008-Text); T2 endete im
+  falschen Refusal. Das Refusal-Muster ist zwischen den Läufen GEWANDERT
+  (vorher T0/T1 Refusal + T2 OI-007; jetzt umgekehrt) — der LLM-Pfad ist
+  nicht deterministisch.
+- policy_aut_errors 0/15 — ✅ bestätigt (stärkt den Paper-Kernbefund).
+
+**Fail-Analyse (3 gezielte Blicke, Diagnose-Reihenfolge WORKING_RULES):**
+1. **base_10 T0/T1 (r_policy=0.0):** OI-007, unverändert ungefixt — erwartungs-
+   gemäßer Fail-Typ, aber Häufigkeit höher als erwartet (2/3 statt 1/3).
+2. **base_10 T2 + base_56 T0/T1 (Refusals):** alle drei ohne einen einzigen
+   Tool-Call → Refusal fiel im ersten Turn. PLAN-GUARD und Intake-Check
+   verifizieren beide gegen den Katalog; ein Refusal ist damit nur noch möglich,
+   wenn das LLM einen NICHT existierenden Tool-Namen behauptet
+   (OI-011-Restrisiko 1/2). Quelle Intake vs. Planner erneut nicht
+   unterscheidbar — Agent-Logs waren wieder nicht umgeleitet (identische
+   Konfiguration wie gefordert; Diagnose-Lücke bleibt OI-011).
+3. **base_56 T2 (r_policy=0.0, neu):** LLM-POL:022 (Klasse C, inhärent
+   semantisch): Agent nahm die fastest route und bot Alternativen an, sagte aber
+   nicht explizit, DASS er die fastest gewählt hat. Erster empirischer Beleg
+   für einen Klasse-C-Fail → OI-012.
+
+**Hypothesen für die verbleibenden Refusals (nicht umgesetzt, für Härtung):**
+- H-R1: Intake/Planner erfindet plausible Alias-Namen (z. B.
+  `navigation_remove_waypoint`); Abgleich per Fuzzy-/Präfix-Match gegen den
+  Katalog könnte erfundene Namen als „existiert ähnlich → Re-Plan" behandeln.
+- H-R2: Intake-Pfad braucht denselben Rebuttal-Mechanismus wie PLAN-GUARD
+  (Re-Intake statt sofortiges Refusal).
+- H-R3: Ohne Agent-Log-Umleitung bleibt jede Zuordnung Ausschluss-Diagnose —
+  Log-Umleitung ist Voraussetzung für jeden weiteren Diagnose-Fortschritt.
+
+**Abnahme-Kriterium (≥80 % Pass^3): NICHT erfüllt. Auftrag B wird NICHT
+abgenommen; Stand dokumentiert, Übergabe an User (STOPP gemäß Auftrag).**
+Positiv festzuhalten: beide deterministischen Fixes wirken nachweislich
+(kein 019-FP mehr; Refusals 5→3), und der deterministische AUT-Kern steht
+bei 0 Fehlern in 30/30 Läufen.

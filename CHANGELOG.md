@@ -19,6 +19,19 @@ All notable changes to the glassbox CAR-bench agent.
     danach ehrliches VERIFY-Ende statt Refusal. 3 Tests (1 angepasst, 2 neu)
 
 ### Added
+- B6-Wiederholungslauf (Lauf 20260704-194848, identische Konfiguration): Pass^3
+  weiter 60.0 % — Hypothese (80 %) nicht bestätigt, Abnahme-Kriterium nicht
+  erfüllt. Beide Fixes wirken nachweislich (kein AUT-POL:019-FP mehr, Refusals
+  5/15 → 3/15, policy_aut_errors 0 in 15/15 = kumuliert 0/30), aber: OI-007
+  traf base_10 2×, drei First-Turn-Refusals ohne Tool-Call (OI-011-Restrisiko,
+  erfundene Tool-Namen), neuer Klasse-C-Fail LLM-POL:022 (→ OI-012).
+  Analyse in `docs/devlog.md`; Rohdaten beider B6-Läufe unter
+  `docs/experiments/2026-07-04-b6-*.json`
+- `docs/open_issues.md`: OI-012 (LLM-POL:022, erster Klasse-C-Fail);
+  OI-011-Update (Refusal-Muster wandert, erfundene Tool-Namen als Restursache)
+- `docs/devlog.md`: Lessons aus B6 (deterministisches Gate für jedes
+  LLM-Entscheidungsfeld — verbindlich für Auftrag C; projected_before-Regel;
+  Fail-Landkarte) + Hypothesen-Eintrag für den Wiederholungslauf
 - `docs/devlog.md`: B6-Ergebniseintrag — Hypothesen H1/H4 widerlegt, H3 bestätigt;
   policy_aut_errors=0 in 15/15 (deterministischer AUT-Teil hielt); Abnahme nicht
   bestanden, Wiederholungslauf erst nach erneuter Freigabe

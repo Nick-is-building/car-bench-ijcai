@@ -173,3 +173,34 @@ VERIFY-Ende statt Refusal.
 **Nächster Schritt:** Agent-Server-Logs bei Eval-Läufen in Datei umleiten;
 Intake-Guard analog PLAN-GUARD prüfen; Wirkung im nächsten freigegebenen
 Abnahme-Lauf messen (base_10/base_56 erneut).
+
+**Update Wiederholungslauf (2026-07-04, Lauf 20260704-194848):** Refusals von
+5/15 auf 3/15 reduziert (base_10 T2, base_56 T0/T1) — PLAN-GUARD wirkt, schließt
+das Loch aber nicht. Alle 3 Refusals fielen im ERSTEN Turn ohne einen einzigen
+Tool-Call; da PLAN-GUARD und Intake-Check gegen den Katalog verifizieren, bleibt
+als Ursache ein vom LLM erfundener (nicht existierender) Tool-Name — exakt
+Restrisiko 1/2. Das Refusal-Muster wanderte zwischen den Läufen (vorher base_10
+T0/T1, jetzt T2) → nicht deterministisch. Härtungskandidaten (H-R1–H-R3 im
+devlog): Fuzzy-/Präfix-Match erfundener Namen gegen den Katalog; Re-Intake-
+Rebuttal analog PLAN-GUARD; Agent-Log-Umleitung als Diagnose-Voraussetzung.
+
+---
+
+## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — erster Klasse-C-Fail
+**Entdeckt:** 2026-07-04 (B6-Wiederholungslauf, base_56 T2)  **Stufe:** 4  **Priorität:** mittel
+
+LLM-POL:022 (Klasse C, ADR-0004: inhärent semantisch, bewusst LLM-getragen):
+Bei Multi-Stop-Routen ohne User-Vorgabe die fastest route proaktiv nehmen UND
+den User informieren, dass die fastest gewählt wurde. Im Lauf 20260704-194848
+nahm der Agent die fastest route und bot Alternativen an, sagte aber nicht
+explizit, DASS es die fastest ist → policy_llm_error, r_policy=0.0
+(einziger Klasse-C-Fail bisher; erster empirischer Beleg, dass Klasse C real
+r_policy kostet).
+
+**Härtungskandidat (nur notiert):** Die Obligation ist deterministisch
+triggerbar (get_routes_from_start_to_destination-Result im Ledger + mehrere
+Segmente) — eine ObligationNoteRule könnte den Hinweis „sage explizit: fastest
+gewählt" in den RESPOND/VERIFY-Prompt injizieren. Gehört wie OI-007 in die
+Härtungsphase nach dem Kalibrierschuss.
+
+**Nächster Schritt:** In der Härtungsphase zusammen mit OI-007 priorisieren.
