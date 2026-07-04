@@ -508,3 +508,48 @@ gemini-2.5-flash, seed 10, 5 Base-Tasks × 3 Trials, Stufe-4-Abnahme-Szenario).
   → OI-007/OI-012 zählen NICHT gegen B, sind dokumentierte Klasse-B/C-Härtungsziele
 - **Refusals aus Capability-Pfad:** Ziel **0/15** (kumuliert 0/45 wenn bestätigt)
 - **policy_aut_errors:** Ziel **0/15** (kumuliert 0/45)
+
+---
+
+## 2026-07-04 — Lauf 3 (B-FINAL, nach OI-011-Härtung): Ergebnis
+
+**Lauf:** 20260704-204955, identische Config (Agent claude-sonnet-4-6,
+Judge/User-Sim gemini-2.5-flash, seed 10, 5 Base-Tasks × 3 Trials, 647.2 s).
+Rohdaten: `docs/experiments/2026-07-04-lauf3-oi011.json`
+
+| Metrik | Wert |
+|---|---|
+| Pass^3 | **60.0 %** (base_0, base_16, base_20 je 3/3 ✓; base_10 0/3 ✗; base_56 2/3 ✗) |
+| Pass^1=Pass^2 | 60.0 % (gleich → stabil) |
+| Pass@3 | 80.0 % (base_0/16/20/56 je ≥1/3) |
+| policy_aut_errors | **0 in 15/15** — dritter Lauf in Folge (kumuliert **0/45**) |
+| Refusals (OUT_OF_SCOPE) | **2/15** (vorher 3/15): base_56 T0, base_10 T1 |
+
+**Hypothese: TEILWEISE bestätigt.** Im Einzelnen:
+- base_0/16/20 3/3 — ✅ bestätigt.
+- base_56 2/3 — ✅ bestätigt (Hypothese war 2-3/3). T0 Refusal bleibt (OI-011,
+  stochastisch); T1+T2 ✓ → **Fuzzy-Gate wirkt nachweislich** für 2/3 Trials.
+- base_10 0/3 — ✅/❌ Hypothese war 0-1/3; 0/3 erzielt. ABER die Verteilung
+  wanderte: T0 OI-007 ✗, T1 Refusal (OI-011) ✗, T2 OI-007 ✗ — base_10
+  hat jetzt BEIDE ungelösten Issues pro Lauf.
+- policy_aut_errors 0/15 — ✅ bestätigt (kumuliert 0/45, Paper-Kernbefund stabil).
+- Refusals 2/15 — Ziel war 0/15: ❌ nicht erreicht.
+
+**Fail-Analyse (3 gezielte Blicke, max laut Debugging-Deckel):**
+1. **base_56 T0 (Refusal):** "navigation controls aren't available to me right
+   now" — 0 Tool-Calls, alle GT-Tools (get_current_navigation_state,
+   navigation_delete_waypoint, get_routes_from_start_to_destination) im Katalog.
+   Klassisches OI-011-Muster; Quelle (Intake vs. Planner) ohne Agent-Server-Log
+   nicht bestimmbar (H-R3 greift im nohup-Subprocess-Stderr nicht).
+2. **base_10 T1 (Refusal):** "not able to control fog lights" — 0 Tool-Calls,
+   alle GT-Tools (set_fog_lights, set_head_lights_low_beams, get_weather etc.)
+   im Katalog. OI-011; stochastisch (T0+T2 sind OI-007, nicht Refusal).
+3. **Muster:** Refusals 5→3→2 über 3 Läufe. Fuzzy-Gate + Intake-Rebuttal
+   reduzierten Refusals messbar, schließen sie aber nicht vollständig. Das
+   LLM-Verhalten ist inhärent stochastisch (base_56 T0 failed, T1+T2 passten).
+
+**Abnahme-Kriterium B (revised):**
+- (1) policy_aut_errors = 0/15 ✓
+- (2) KEIN falscher Refusal aus Capability-Pfad: ❌ (2 Refusals verbleiben)
+- (3) base_0/16/20 3/3 ✓
+**→ B NICHT abgenommen. Debugging-Deckel erreicht. STOPP gemäß Auftrag.**
