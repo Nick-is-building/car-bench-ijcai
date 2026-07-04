@@ -253,3 +253,39 @@ OI-009 (AUT-POL:016-Guard), OI-010 (vorbestehende a2a-Failures).
 
 **Nächster Schritt:** B6-Abnahme-Lauf (5 Tasks × 3, Base-Split) — Hypothese-Eintrag
 folgt separat VOR dem Lauf; Kostenschätzung geht zuerst an den User (Freigabe-Gate).
+
+---
+
+## 2026-07-04 — B6-Abnahme-Lauf Stufe 4: Hypothese (VOR dem Lauf)
+
+**Setup:** 5 feste Base-Task-IDs × 3 Trials (= 15 Task-Läufe), Split train,
+Agent anthropic/claude-sonnet-4-6, User-Sim + Policy-Judge gemini/gemini-2.5-flash,
+seed 10, sequenziell. Szenario: `scenarios/track_1_agent_under_test/local_stufe4_abnahme.toml`.
+Stand: Commit nach 9233489 (Stufe 4 komplett).
+
+**Task-Auswahl (fest, regeltyp-getrieben — vor dem Lauf festgelegt):**
+- `base_0` — sunroof/sunshade + weather: AUT-POL:005 (Verfügbarkeit + Wert), AUT-POL:009
+- `base_10` — fog lights + low beams: AUT-POL:009, AUT-POL:013 (state_companion)
+- `base_16` — defrost/fan/AC/window: AUT-POL:010, AUT-POL:011 (state_companion mehrfach)
+- `base_20` — Kalender: AUT-POL:023 (value_bound); zugleich Null-FP-Kontrolle
+  (fast reiner Read-Task — Pre-Flight darf hier nichts injizieren/blockieren)
+- `base_56` — Navigation delete_waypoint: AUT-POL:017/018/019 (state_precondition, no_parallel)
+
+**Hypothesen:**
+1. **r_policy nirgends < 1.0** über alle 15 Task-Läufe — der deterministische
+   Pre-Flight verhindert AUT-POL-Verletzungen strukturell (Injektion/Defer statt
+   Verletzung; Null-FP-Disziplin verhindert falsche Blockaden).
+2. **Base-Pass nicht schlechter** als vor Stufe 4 (Referenz: Stufe-3-Stabilitätstest,
+   Base 3/4 Läufe Pass^1=100 %, anderer Task-Mix — nur grobe Richtgröße, kein 1:1-Vergleich).
+3. `plan_bound_hit` feuert nie (injizierte Observations/Companions kosten Runden,
+   Bound 16 hat Marge).
+4. Kein Lauf endet in Refusal auf diesen 5 Tasks (alle benötigten Tools sind im
+   Katalog vorhanden; missing_capability darf nicht triggern).
+
+**Messart:** Pass^3 über 3 Trials pro Task + Pass^1 je Trial; r_policy aus den
+Evaluator-Rewards. Kostenschätzung vorab: ~$1–2 Agent + <$0.10 Gemini (Basis:
+Stufe-3-Smoke ~$0.06/Task-Lauf, Puffer ×2 für Pre-Flight-Overhead). User-Freigabe
+liegt vor (2026-07-04).
+
+**Lauf-Disziplin:** nohup > _local/runs/stufe4_abnahme.log, kein Live-Tail;
+Auswertung einmalig nach Abschluss. Ergebnis-Eintrag folgt separat.

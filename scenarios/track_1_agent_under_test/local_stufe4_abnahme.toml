@@ -1,0 +1,24 @@
+# Stufe-4-Abnahme-Lauf (Auftrag B6): 5 feste Base-Tasks x 3 Trials.
+# Feste Task-IDs decken alle implementierten Regeltypen ab (siehe devlog 2026-07-04):
+#   base_0  — AUT-POL:005 (beide Aspekte) + 009 (sunroof/sunshade/weather)
+#   base_10 — AUT-POL:009 + 013 (fog lights + low beams)
+#   base_16 — AUT-POL:010 + 011 (defrost/fan/AC/window)
+#   base_20 — AUT-POL:023 (Kalender aktueller Tag) + Null-FP-Kontrolle
+#   base_56 — AUT-POL:017/018/019 (Navigation waypoint edit)
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_stufe4_abnahme.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_0", "base_10", "base_16", "base_20", "base_56"]
+seed = 10
+max_steps = 50
