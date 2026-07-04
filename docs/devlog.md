@@ -4,6 +4,45 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-04 — Auftrag C, C8: Stufe-5-Abnahme-Lauf (3 Base + 2 Hallucination × 3 Trials)
+
+**Hypothese vor Lauf (seed=10, claude-sonnet-4-6):**
+
+Tasks: base_0 (sunshade/sunroof-Bindung → C3), base_16 (Temperatur/Klima → C2), base_56
+(Navigation → OI-012 Routen-Erwähnung), + 2 zufällige Hallucination-Tasks (OI-001).
+
+Erwartete Ergebnisse:
+
+1. **Sunshade-Fehlertyp absent:** OI-003-Muster (Sunshade-Prozent von Planner falsch geerbt)
+   tritt in base_0 nicht mehr auf — C3 Bindungs-Check fängt falsche entity-Zuordnung
+   und eskaliert zu PROVENANCE-REPLAN oder Senke, bevor ein fehlerhafter Call ausgeführt wird.
+
+2. **Hallucination 100 %:** Beide Hallucination-Tasks erreichen r_hallucination_detection=1.0.
+   `FabricationGuard.sanitize()` (C5) ersetzt Sätze mit erfundenen Werten — OI-001
+   (result_field_entzug) ist damit deterministisch abgedeckt.
+
+3. **policy_aut_errors = 0:** Kein AUT-Policy-Fehler in allen 9 Base-Trial-Runs.
+   C2 verhindert numerische Halluzinationen strukturell; Stufe-4-Policies unverändert.
+
+4. **Keine neuen False-Positive-Blocks:** C3/C4 liefert bei korrekt gebundenen Werten
+   (user sagt "sunshade 50%" → Tool open_close_sunshade(50)) PASS — kein Refusal,
+   kein Senken-Fallback. r_actions_final bleibt auf Vorlauf-Niveau.
+
+5. **Capability-Refusals ≤ Vorlauf:** PLAN-GUARD + Intake-Rebuttal (H-R1/H-R2) halten;
+   base_56-Muster (erfundener Tool-Name) ≤ 1/3 Trials.
+
+6. **Layer-Telemetrie messbar:** `layer_decisions` in Agent-Log — mindestens ein
+   FabricationGuard.C2/C3/C5-Eintrag pro Trial sichtbar.
+
+Abnahme-Kriterien (C bestanden wenn alle erfüllt):
+- [ ] 110 Unit-Tests grün, OI-001 grün (kein Skip)
+- [ ] Kein Sunshade-Fehlertyp in base_0-Trials
+- [ ] Hallucination-Detection 100 % (beide Tasks)
+- [ ] policy_aut_errors = 0 (alle Base-Trials)
+- [ ] Keine neuen False-Positive-Blocks im Vergleich zu Auftrag-B-Lauf-4
+
+---
+
 ## 2026-07-04 — Auftrag C: FabricationGuard + Argument-Provenienz + Kaskaden-Refactor
 
 **Hypothese vor Implementierung (unit tests only, kein echtes Modell):**

@@ -1,0 +1,25 @@
+# Stufe-5-Abnahme-Lauf (Auftrag C8): 3 feste Base-Tasks + 2 Hallucination-Tasks × 3 Trials.
+# Task-Auswahl deckt die in Auftrag C implementierten Schichten ab:
+#   base_0  — sunshade/sunroof Entity-Bindung → C3 Bindungs-Check (entity synonym gate)
+#   base_16 — Temperatur/Klima-Numerik → C2 Numerik-Provenienz
+#   base_56 — Navigation multi-stop → OI-012 Routen-Erwähnungs-Gate (C5)
+# Hallucination (2 Tasks): OI-001-Fix via FabricationGuard.sanitize() (C5)
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/stufe5_abnahme_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_stufe5_abnahme.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_0", "base_16", "base_56"]
+tasks_hallucination_num_tasks = 2
+seed = 10
+max_steps = 50
