@@ -355,3 +355,47 @@ Agent-Server-Log in Datei umleiten (in OI-011 festgehalten).
 **Konsequenz:** Beide deterministischen Fixes sind committet (Tests: 99 passed,
 1 skipped, 2 vorbestehende a2a-Failures = OI-010). Wiederholung des
 Abnahme-Laufs erst nach erneuter User-Freigabe (Kosten ~$1).
+
+## 2026-07-04 — Lessons aus B6 (gelten ab jetzt als Arbeitsprinzipien)
+
+**a) Design-Prinzip (wichtigste Lehre):** JEDES LLM-Feld, das eine Entscheidung
+auslöst, braucht ein deterministisches Gate — kein Flag und kein Claim des
+Planners wird ungeprüft geglaubt. Der PLAN-GUARD-Fix ist die Blaupause: das LLM
+behauptet (`capability_missing` + `missing_tools`), der Code verifiziert gegen
+den Katalog, ein widerlegter Claim führt zu Note + Re-Plan statt zu einer
+Aktion. Restrisiko wird in OI-011 verfolgt. **Dieses Prinzip gilt verbindlich
+für Auftrag C:** Bei der LLM-gestützten Attribution (Bindungs-Prüfung)
+entscheidet ausschließlich Code über blockieren/durchlassen — das LLM liefert
+nur Kandidaten.
+
+**b) Kernbefund fürs Paper:** policy_aut_errors = 0 in 15/15 Läufen
+(B6-Abnahme, Pass^3, n=5 Base-Tasks × 3 Trials, Agent claude-sonnet-4-6,
+Judge gemini-2.5-flash, seed 10) — der deterministische AUT-Kern hielt
+vollständig. Alle Fails stammten aus LLM-vertrauenden Pfaden: unverifiziertes
+Planner-Flag, Prädikat-Bug (019, behoben), Klasse-B-Rest (OI-007). Beleg:
+`output/track_1_agent_under_test/20260704-042323__*.json` + Commit 720947b.
+(Auch als Zeile in `paper/claims.md` festgehalten.)
+
+**c) Precondition-Semantik als Regel:** Prädikate prüfen IMMER den Zustand VOR
+dem eigenen Call (`projected_before`) — ein Call darf sich nie über seinen
+eigenen Effekt selbst blockieren. Gilt für alle künftigen Regeltypen.
+
+**d) Fail-Landkarte:** Die Fehler kommen aus den 7 Klasse-B-Policies
+(OI-007 = Wetter-Confirmation), nicht aus den 9 Klasse-A-Policies. OI-007 ist
+KEIN Ziel für Stufe 5/6 — es gehört in die Härtungsphase nach dem
+Kalibrierschuss. Kandidat (nur notiert, nicht umgesetzt): deterministische
+Vorbedingung „Wetter-Wert nicht in {clear, sunny} ⇒ Confirmation-Pflicht vor
+dem Call".
+
+## 2026-07-04 — Hypothese für den B6-Wiederholungslauf (VOR dem Start committet)
+
+B6-Wiederholung nach Fix 1 (projected_before) + Fix 2 (PLAN-GUARD):
+base_0/16/20 bleiben 3/3. base_56 jetzt 3/3 (AUT-POL:019-FP behoben).
+base_10 jetzt 2/3 — T0/T1 gerettet durch PLAN-GUARD, T2-Fail bleibt erwartet
+(OI-007 Wetter-Confirmation, ungefixt). Erwartetes Ergebnis: Pass^1 = 80 %,
+Pass^3 = 80 % (4/5). policy_aut_errors weiterhin 0/15. Falls base_10 doch 3/3:
+T2-Fail von damals war Judge-Rauschen — als Judge-Varianz-Beobachtung notieren.
+
+Konfiguration identisch zum ersten B6-Lauf: `local_stufe4_abnahme.toml`
+(5 feste Base-Task-IDs × 3 Trials, Agent claude-sonnet-4-6,
+User-Sim + Judge gemini-2.5-flash, seed 10).
