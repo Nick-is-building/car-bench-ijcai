@@ -26,3 +26,6 @@ scenarios/**/a2a-scenario.toml
 
 # Paper-Vorarbeit (lokal, nicht öffentlich)
 paper/
+
+# Claude Code Projektanweisungen (lokal, nie pushen)
+CLAUDE.md
