@@ -148,42 +148,51 @@ class StateMachine:
         ctx.transition(State.INTAKE)
         ctx.intent = prompts.intake.extract_intent(ctx)
 
-        # INTAKE-REBUTTAL (OI-011 H-R2): one-time re-extract if required_tools
-        # contains names not in the catalog but close to a catalog tool.
-        # Source of refusal becomes diagnosable: intake vs. planner.
+        # INTAKE-REBUTTAL (OI-011 H-R2): one-time re-extract if required_tools or
+        # required_but_missing_tools contain names not in the catalog but close to a
+        # catalog tool (fuzzy or substring match).
         if not ctx.intake_rebuttal_done:
             idx = CapabilityIndex(ctx.tools)
             unknown_required = [
                 t for t in ctx.intent.get("required_tools", [])
                 if not idx.has_tool(t)
             ]
-            if unknown_required:
+            # Also rebuttal when the LLM wrongly claims a capability is missing
+            # (e.g. "navigation_delete_waypoint" instead of "delete_waypoint")
+            unknown_missing = [
+                t for t in ctx.intent.get("required_but_missing_tools", [])
+                if not idx.has_tool(t)
+            ]
+            all_unknown = list(dict.fromkeys(unknown_required + unknown_missing))
+            if all_unknown:
                 hints: dict[str, list[str]] = {}
-                for t in unknown_required:
+                for t in all_unknown:
                     candidates = fuzzy_catalog_hint(t, idx.tool_names)
                     if candidates:
                         hints[t] = candidates
                 if hints:
                     ctx.intake_rebuttal_done = True
                     note = (
-                        "INTAKE-REBUTTAL: some required_tools names are not in the catalog. "
+                        "INTAKE-REBUTTAL: some tool names are not in the catalog. "
                         + " ".join(
-                            f"'{t}' → closest: {' / '.join(c)}."
+                            f"'{t}' → closest catalog tool: {' / '.join(c)}."
                             for t, c in hints.items()
                         )
-                        + " Re-extract using exact catalog tool names."
+                        + " Re-extract using exact catalog tool names. "
+                        + "If a catalog tool covers the needed step, do NOT list it in "
+                        + "required_but_missing_tools."
                     )
                     _log.info(
                         "INTAKE-REBUTTAL: re-extracting intent",
-                        source="intake_required_tools",
+                        source="intake_required_tools+missing",
                         fuzzy_hints={t: c for t, c in hints.items()},
                     )
                     ctx.intent = prompts.intake.extract_intent(ctx, rebuttal_note=note)
                 else:
                     _log.warning(
-                        "INTAKE: unknown required_tools with no fuzzy match — will refuse",
-                        source="intake_required_tools",
-                        unknown=unknown_required,
+                        "INTAKE: unknown tool names with no fuzzy/substring match — will refuse",
+                        source="intake_required_tools+missing",
+                        unknown=all_unknown,
                     )
 
         ctx.transition(State.CAPABILITY_CHECK)

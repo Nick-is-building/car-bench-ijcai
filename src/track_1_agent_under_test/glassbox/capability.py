@@ -22,8 +22,17 @@ FUZZY_THRESHOLD = 0.80
 
 
 def fuzzy_catalog_hint(tool_name: str, catalog_names: list[str]) -> list[str]:
-    """Return up to 2 catalog names close to tool_name (empty = no match)."""
-    return difflib.get_close_matches(tool_name, catalog_names, n=2, cutoff=FUZZY_THRESHOLD)
+    """Return up to 2 catalog names close to tool_name (empty = no match).
+
+    Falls back to substring matching so that names like "navigation_delete_waypoint"
+    match "delete_waypoint" even when the difflib ratio is below the threshold.
+    """
+    matches = difflib.get_close_matches(tool_name, catalog_names, n=2, cutoff=FUZZY_THRESHOLD)
+    if matches:
+        return matches
+    # Substring fallback: catalog tool name appears literally inside the unknown name
+    sub = [t for t in catalog_names if len(t) > 4 and t in tool_name]
+    return sub[:2]
 
 CapabilityResult = Literal["covered", "uncovered", "ambiguous"]
 

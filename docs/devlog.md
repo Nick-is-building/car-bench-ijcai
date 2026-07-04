@@ -4,6 +4,42 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-04 — Auftrag C, C8b: Stufe-5-Abnahme-Lauf Wiederholung nach False-Positive-Fixes
+
+**Ausgangslage nach C8 (Lauf 20260704-232801):** Base 0%, Hallucination 100%.
+
+Ursachen Base 0%:
+- **C3 Gate-1-FP**: leere `source_quote` aus der Attribution (Planner inferiert Werte aus
+  natürlicher Sprache, z.B. fan-level, window-percentage) → UNCERTAIN → Senke.
+  `open_close_window`, `set_fan_speed` betroffen.
+- **C5-FP**: String-Paraphrasen wie "cloudy with rain" (Ledger: "cloudy_and_rain") und "closed"
+  (Ledger: JSON 0) wurden als ungestützte Claims ersetzt → Bestätigungsantwort kaputt.
+- **H-R2-Lücke**: `required_but_missing_tools` wurde nicht auf Fuzzy/Substring-Treffer
+  geprüft. "navigation_delete_waypoint" (LLM-Erfindung) → kein Rebuttal → Refusal.
+
+Fixes (alle 110 Tests grün nach Fix):
+1. `guard.py` C3 Gate 1: leere Quote → `continue` (inferierter Wert, nicht falsifizierbar)
+2. `guard.py` C3 Gate 2: nur UNCERTAIN wenn Quote eine ANDERE bekannte Entität nennt
+   (Kompetenz-Entitäten-Liste `_KNOWN_ENTITIES`); fehlendes Entity-Nennen → PASS
+3. `guard.py` C5: Satz-Claims ohne Ziffern überspringen (String-Paraphrasen erlaubt)
+4. `capability.py` `fuzzy_catalog_hint`: Substring-Fallback ("delete_waypoint" ⊂ "navigation_delete_waypoint" → Treffer)
+5. `state_machine.py` H-R2: auch `required_but_missing_tools` auf Fuzzy/Substring prüfen;
+   Rebuttal-Note warnt davor, Katalog-Tools in `required_but_missing_tools` zu listen
+
+**Hypothese C8b:**
+1. base_16: open_close_window + set_fan_speed → C3 Fix 1 → PASS → Tools werden ausgeführt → r_actions_final > 0
+2. base_56: "navigation_delete_waypoint" → Substring-Match → H-R2 Rebuttal → Re-Extrakt →
+   korrekter Tool-Name → kein Refusal → r_actions_final > 0
+3. base_0: C5 Fix → "cloudy with rain" und "closed" nicht mehr ersetzt; "50%" noch ersetzt
+   (keine Ziffern im Ledger für "halfway"); Bestätigungs-Antwort besser → user sim sagt "yes" →
+   Turn 2: open_close_sunroof + open_close_sunshade → r_actions_final > 0
+4. Hallucination bleibt 100% (C5 schlägt weiterhin für "42 minutes" an → OI-001 korrekt)
+5. Keine neuen Sunshade-Konfusions-FPs: C3 Gate 2 erkennt weiterhin sunroof-Quote bei sunshade-Call
+
+Erwartetes Gesamtergebnis: Base > 50%, Hallucination 100%.
+
+---
+
 ## 2026-07-04 — Auftrag C, C8: Stufe-5-Abnahme-Lauf (3 Base + 2 Hallucination × 3 Trials)
 
 **Hypothese vor Lauf (seed=10, claude-sonnet-4-6):**

@@ -18,6 +18,7 @@ Compliance: prueft nur gegen Wahrheit + Ledger — niemals gegen Evaluator-Subsc
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -94,6 +95,14 @@ _COMMON_VERBS = frozenset({
 _ROUTE_TOOLS = frozenset({
     "set_new_navigation", "add_waypoint", "replace_waypoint",
     "delete_waypoint",
+})
+
+# Known in-car entities for C3 Gate-2 competing-entity detection.
+# Only flag binding confusion when the source quote explicitly mentions a different entity.
+_KNOWN_ENTITIES = frozenset({
+    "sunroof", "sunshade", "window", "seat", "heater",
+    "climate", "fan", "defrost", "navigation", "radio",
+    "light", "fog", "mirror", "door", "trunk", "temperature",
 })
 
 _ROUTE_CHOICE_WORDS = ("fastest", "quickest", "shortest", "optimal", "direct")
@@ -247,8 +256,12 @@ class FabricationGuard:
         for attr in resp.attributions:
             quote = attr.source_quote.strip()
 
-            # Gate 1: source quote must exist literally in the ledger
-            if not quote or quote not in corpus:
+            # Gate 1: empty quote means the value is inferred from context (not falsifiable) → skip
+            if not quote:
+                continue
+
+            # Gate 1b: non-empty quote must exist literally in the ledger corpus
+            if quote not in corpus:
                 _log.info(
                     "FabricationGuard.C3: source quote not found in ledger",
                     tool=tool_name, arg=attr.argument_name, quote=quote[:80],
@@ -262,23 +275,30 @@ class FabricationGuard:
                     ),
                 )
 
-            # Gate 2: source quote must mention the target entity (tool synonyms)
+            # Gate 2: only flag entity confusion when the quote explicitly names a DIFFERENT
+            # entity — not merely when it omits the target entity (which might be a fragment
+            # quote like "halfway" that doesn't name any entity).
             if synonyms and not any(s in quote.lower() for s in synonyms):
-                _log.info(
-                    "FabricationGuard.C3: value bound to wrong entity",
-                    tool=tool_name, synonyms=synonyms,
-                    source_entity=attr.target_entity,
-                    arg=attr.argument_name,
-                )
-                return GuardResult(
-                    verdict="UNCERTAIN",
-                    layer="FabricationGuard.C3",
-                    reason=(
-                        f"{tool_name}.{attr.argument_name}={attr.argument_value}: "
-                        f"source mentions '{attr.target_entity}', not the target entity "
-                        f"({', '.join(synonyms)})"
-                    ),
-                )
+                competing = [
+                    e for e in _KNOWN_ENTITIES
+                    if e not in synonyms and e in quote.lower()
+                ]
+                if competing:
+                    _log.info(
+                        "FabricationGuard.C3: value bound to wrong entity",
+                        tool=tool_name, synonyms=synonyms,
+                        source_entity=attr.target_entity,
+                        arg=attr.argument_name,
+                    )
+                    return GuardResult(
+                        verdict="UNCERTAIN",
+                        layer="FabricationGuard.C3",
+                        reason=(
+                            f"{tool_name}.{attr.argument_name}={attr.argument_value}: "
+                            f"source mentions '{', '.join(competing)}', not "
+                            f"({', '.join(synonyms)})"
+                        ),
+                    )
 
         return GuardResult(
             verdict="PASS",
@@ -323,6 +343,10 @@ class FabricationGuard:
 
         safe = draft
         for claim in resp.claims:
+            # Only check claims with numeric content — string descriptions may be valid
+            # paraphrases of tool results (e.g. "cloudy with rain" for "cloudy_and_rain").
+            if not re.search(r"\d", claim.value):
+                continue
             if not _value_in_ledger(claim.value, corpus):
                 _log.info(
                     "FabricationGuard.C5: unsupported claim replaced",
