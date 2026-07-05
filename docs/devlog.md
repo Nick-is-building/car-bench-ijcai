@@ -4,6 +4,40 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-05 — Auftrag C, C8c: base_56-Fix (required_params-Check entfernt)
+
+**Ausgangslage nach C8b (Lauf 20260705-001450):** Base 66.7% (base_0 ✓✓✓, base_16 ✓✓✓, base_56 ✗✗✗), Hallucination 100%.
+
+Diagnose base_56 T0–T2:
+- INTAKE generiert korrekte `required_tools` (alle im Katalog — "navigation_delete_waypoint",
+  "navigation_replace_final_destination", "get_location_id_by_location_name" sind echte Tools).
+- Kein Rebuttal, weil all_unknown = [] (alle Tools im Index).
+- Capability check gibt "uncovered" wegen falschem Parameternamen in `required_params`:
+  INTAKE nennt z.B. "location_name" statt dem exakten Schema-Parameternamen.
+- Der `required_params`-Check ist redundant: execute_guard und check_step() prüfen
+  tatsächliche Call-Argumente deterministisch. INTAKE generiert oft ungenaue Param-Namen.
+
+Fix (C8c):
+- `capability.py`: required_params-Check aus `check()` entfernt. Nur Tool-Namen und
+  required_but_missing_tools werden noch validiert. Parameter-Validierung erfolgt
+  ausschließlich in `check_step()` während EXECUTE.
+- `tests/test_glassbox_state_machine.py`: `test_uncovered_missing_parameter` →
+  `test_required_params_not_checked_at_intake` (Erwartung: "covered")
+
+base_0 T0 Beobachtung (multi-turn success):
+- Turn 1: agent fragt wegen Wetter nach Bestätigung (korrekt per LLM-POL:008).
+- Turn 2: User sagt "all the way" — C2 BLOCK weil "100" nicht im Ledger → ehrliche
+  Klärungsbitte (kein Fehler, korrekte Vorsicht).
+- Turn 3: User gibt "100%" und "50%" explizit → beide Tools ausgeführt → r_actions_final=1.0.
+
+**Hypothese C8c:**
+- base_56: required_params-Fix → capability = "covered" → PLAN ruft navigation_delete_waypoint
+  mit get_current_navigation_state-Ergebnis auf → r_actions_final > 0 für ≥1/3 Trials.
+- base_0/base_16: unverändert ✓✓✓.
+- Hallucination: unverändert 100%.
+
+---
+
 ## 2026-07-04 — Auftrag C, C8b: Stufe-5-Abnahme-Lauf Wiederholung nach False-Positive-Fixes
 
 **Ausgangslage nach C8 (Lauf 20260704-232801):** Base 0%, Hallucination 100%.

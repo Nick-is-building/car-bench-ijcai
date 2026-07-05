@@ -158,14 +158,16 @@ class CapabilityMatcherTest(unittest.TestCase):
                   "is_ambiguous": False}
         self.assertEqual(m.check(intent), "uncovered")
 
-    def test_uncovered_missing_parameter(self):
+    def test_required_params_not_checked_at_intake(self):
+        # required_params is no longer checked in check() — parameter validation
+        # happens at execution time via check_step() to avoid INTAKE false positives.
         m = self.matcher()
         intent = {
             "required_tools": ["get_weather"],
             "required_params": [{"tool": "get_weather", "params": ["nonexistent_param"]}],
             "is_ambiguous": False,
         }
-        self.assertEqual(m.check(intent), "uncovered")
+        self.assertEqual(m.check(intent), "covered")
 
     def test_uncovered_required_but_missing_tool(self):
         """required_but_missing_tools set → uncovered even if required_tools all exist."""

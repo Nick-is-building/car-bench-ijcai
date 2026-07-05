@@ -119,20 +119,11 @@ class CapabilityMatcher:
             if not self.index.has_tool(tool_name):
                 return "uncovered"
 
-        # Parameters the request constrains — must all be present in schema
-        for tp in intent.get("required_params", []):
-            if isinstance(tp, dict):
-                tool_name = tp.get("tool", "")
-                params = tp.get("params", [])
-            else:
-                tool_name = tp.tool
-                params = tp.params
-            for param in params:
-                # Defensive: LLMs sometimes output "name=value" — strip the value part
-                param_name = param.split("=")[0].strip()
-                if not self.index.has_parameter(tool_name, param_name):
-                    return "uncovered"
-
+        # Note: required_params is intentionally NOT checked here.
+        # INTAKE frequently generates parameter names that don't match the schema
+        # exactly (e.g. "location_name" vs "location_or_poi_id"), causing false
+        # positives. Parameter validity is enforced at execution time by check_step()
+        # and the execute_guard, which validate actual call arguments.
         return "covered"
 
     def check_step(self, tool_name: str, arguments: dict) -> CapabilityResult:
