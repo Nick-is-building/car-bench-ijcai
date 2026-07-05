@@ -146,9 +146,9 @@ nicht den Glassbox-Agenten.
 
 ---
 
-## OI-011 — Falsche Capability-Refusals aus dem LLM-Pfad (Intake/Planner)
-**Entdeckt:** 2026-07-04 (B6-Abnahme-Lauf)  **Stufe:** 3/4  **Priorität:** hoch
-**Status: GELÖST für Abnahme-Kriterium B (Lauf 4: 0/15 Refusals, Lauf-3: 2/15)**
+## OI-011 — Falsche Capability-Refusals aus dem LLM-Pfad (Intake/Planner) ✅ BEHOBEN
+**Entdeckt:** 2026-07-04 (B6-Abnahme-Lauf)  **Behoben:** 2026-07-05 (Auftrag C)  **Stufe:** 3/4
+**Status: VOLLSTÄNDIG BEHOBEN (C8c: 0 Refusals, r_actions_final=1.0 für alle Base-Trials)**
 
 Im B6-Lauf endeten base_10 T0/T1 und base_56 T0/T1 (+T2-Ende) mit falschen
 „nicht verfügbar"-Refusals (OUT_OF_SCOPE), obwohl alle GT-Tools im A2A-Katalog
@@ -193,11 +193,15 @@ committet (Lauf 3 steht aus). Alle Restrisiken deterministisch adressiert:
 3. Log-Umleitung: alle Refusal-Quellen (intake/planner/execute_guard/policy_pre_flight)
    und Tool-Namen in loguru geschrieben; nächster Lauf gibt vollständige Diagnose.
 4 neue Tests grün; alle 61 bestehenden Tests grün.
-**Nächster Schritt:** Wirkung in Lauf 3 messen; bei Refusal-Rest: Logs auswerten.
+
+**Update Auftrag C (2026-07-05):** required_params-Check aus capability.check() entfernt
+(INTAKE generiert oft falsche Param-Namen; Validierung in check_step() / execute_guard).
+H-R2 um required_but_missing_tools erweitert. C8c-Lauf: r_actions_final=1.0 für ALLE
+Base-Trials — keine Refusals mehr. OI-011 vollständig geschlossen. 110 Tests grün.
 
 ---
 
-## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — erster Klasse-C-Fail
+## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — Klasse-C-Fail
 **Entdeckt:** 2026-07-04 (B6-Wiederholungslauf, base_56 T2)  **Stufe:** 4  **Priorität:** mittel
 
 LLM-POL:022 (Klasse C, ADR-0004: inhärent semantisch, bewusst LLM-getragen):
@@ -207,6 +211,11 @@ nahm der Agent die fastest route und bot Alternativen an, sagte aber nicht
 explizit, DASS es die fastest ist → policy_llm_error, r_policy=0.0
 (einziger Klasse-C-Fail bisher; erster empirischer Beleg, dass Klasse C real
 r_policy kostet).
+
+**Update Auftrag C (2026-07-05, Lauf 20260705-004553):** base_56 T0/T1 scheitern
+weiterhin an LLM-POL:022. policy_aut_errors = [] (✓ Akzeptanzkriterium 4 erfüllt).
+r_actions_final = 1.0 (Tools werden korrekt ausgeführt). Der Fail ist rein Klasse C.
+Auftrag C gilt trotzdem als BESTANDEN (Kriterium lautete policy_aut_errors = 0).
 
 **Härtungskandidat (nur notiert):** Die Obligation ist deterministisch
 triggerbar (get_routes_from_start_to_destination-Result im Ledger + mehrere

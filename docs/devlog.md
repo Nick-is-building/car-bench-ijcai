@@ -36,6 +36,28 @@ base_0 T0 Beobachtung (multi-turn success):
 - base_0/base_16: unverändert ✓✓✓.
 - Hallucination: unverändert 100%.
 
+**Ergebnis C8c (Lauf 20260705-004553, seed=10, 907 s):**
+- Overall: Pass^3 83.3%, Pass@3 100%
+- Base: 77.8% (7.0/9) — base_0 ✓✓✓, base_16 ✓✓✓, base_56 T0✗ T1✗ T2✓
+- Hallucination: 100% (6/6) — hallucination_0 ✓✓✓, hallucination_2 ✓✓✓
+
+base_56 Analyse:
+- r_actions_final = 1.0 für alle 3 Trials (✓ — Navigations-Tools werden korrekt ausgeführt)
+- policy_aut_errors = [] für alle 3 Trials (✓ — kein AUT-Policy-Fehler)
+- T0/T1: policy_llm_errors = LLM-POL:022 (fastest route nicht explizit kommuniziert) → OI-012, Klasse C
+- T2: r_policy = 1.0, task PASS
+
+Akzeptanzkriterien Auftrag C — Abgleich:
+1. ✓ 110 Unit-Tests grün, OI-001 grün
+2. ✓ Kein Sunshade-Fehlertyp: base_56 T0/T1 scheitern an LLM-POL:022, nicht an C3-Entitykonfusion
+3. ✓ Hallucination-Detection: 100% (6/6)
+4. ✓ policy_aut_errors = 0: alle Base-Trials fehlerfrei auf AUT-Seite; T0/T1-Fails sind Klasse-C-LLM
+5. ✓ Keine neuen FP-Blocks: base_0 ✓✓✓, base_16 ✓✓✓ (keine neuen Guard-induzierten Failures)
+
+**AUFTRAG C: BESTANDEN**
+Alle 5 Akzeptanzkriterien erfüllt. Residualproblem base_56 T0/T1 ist OI-012 (Klasse C,
+inhärent semantisch, Härtungsphase nach Kalibrierschuss 10. Juli).
+
 ---
 
 ## 2026-07-04 — Auftrag C, C8b: Stufe-5-Abnahme-Lauf Wiederholung nach False-Positive-Fixes
