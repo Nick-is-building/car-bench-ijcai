@@ -4,6 +4,22 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-06 — C9 Docker-Smoke: Containerisierbarkeit des Glassbox-Agents
+
+**Ziel:** Einmaligen Beweis erbringen, dass der Glassbox-Agent in einem Docker-Container
+lauffähig ist (track_1_agent_under_test, AGENT_CLASS=glassbox, AGENT_LLM=claude-sonnet-4-6).
+
+**Hypothese:**
+- Der Build gelingt ohne Fehler (alle Dependencies über uv sync verfügbar).
+- Der Container startet erfolgreich und der Agent antwortet auf Evaluator-Requests.
+- Der Smoke-Lauf (1 Task, 1 Trial, task_split=train) endet mit einem validen Ergebnis.
+- Erwarteter Reward: unklar (1 Task = statistisch zu klein), aber kein Container-Crash.
+- Bekannte Stolpersteine: Build-Cache-Probleme bei ersten Docker-Builds auf dieser VM;
+  Evaluator-Image muss von ghcr.io gezogen werden (Netz-Abhängigkeit);
+  AGENT_CLASS muss als Extra-Env-Var übergeben werden, da nicht im TOML.
+
+---
+
 ## 2026-07-05 — Auftrag C, C8c: base_56-Fix (required_params-Check entfernt)
 
 **Ausgangslage nach C8b (Lauf 20260705-001450):** Base 66.7% (base_0 ✓✓✓, base_16 ✓✓✓, base_56 ✗✗✗), Hallucination 100%.
