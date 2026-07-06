@@ -4,6 +4,109 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-06 — C-Nachtrag: Vertex-Umstellung, Retry/Backoff, Whitelist-Audit, Telemetrie (C8)
+
+**Provider-Feld (ab jetzt Pflicht):** Jeder Lauf protokolliert `Provider: anthropic | vertex_ai`.
+Rückwirkend: alle Läufe bis 2026-07-06 liefen über `Provider: anthropic` (direkte API, kein Vertex).
+
+---
+
+### 1. llm.py — provider-aware + Retry/Backoff
+
+**Provider-aware cache_control (Task 2):**
+- `_apply_cache_hints()` prüft neu `_is_anthropic(model)` am Modellstring-Präfix.
+- Bei `vertex_ai/...` oder jedem anderen Präfix: keine Anthropic-spezifischen `cache_control`-Hints.
+- 3 Tests: anthropic → Hints gesetzt; vertex_ai → keine Hints; gemini → keine Hints. Alle grün.
+
+**Transient-Retry mit exponentiellem Backoff (Task 3):**
+- Neue Funktion `_raw_completion()` wraps `completion()` mit 3 Retries: Wartezeiten 2s / 4s / 8s.
+- Transiente Fehler: `RateLimitError`, `ServiceUnavailableError`, `InternalServerError`,
+  `Timeout`, `APIConnectionError`, `BadGatewayError`.
+- Nicht-transiente Fehler (z.B. `AuthenticationError`) werden sofort eskaliert, kein Retry.
+- 3 Tests: Retry bei transienten Fehlern; kein Retry bei nicht-transienten; Eskalation nach Erschöpfung.
+- **Gesamtsuite: 116 passed, 2 failed (pre-existing OI-010). +6 neue Tests.**
+
+---
+
+### 2. Vertex-Profile (Task 1)
+
+- `.env.anthropic`: ANTHROPIC_API_KEY + AGENT_LLM=anthropic/claude-sonnet-4-6
+- `.env.vertex`: VERTEXAI_PROJECT (Platzhalter ausfüllen), VERTEXAI_LOCATION=us-east5,
+  AGENT_LLM=vertex_ai/claude-sonnet-4-6, kein ANTHROPIC_API_KEY
+- `.gitignore`: `.env.*` ergänzt
+- Umschalten: `cp .env.anthropic .env` (oder `.env.vertex`)
+- _local/WORKING_RULES.md: Switch-Befehl + Vertex-Voraussetzungen dokumentiert
+- **Docker + Vertex-Auth**: noch offen — eigene OI (Docker-Vertex-Auth), separater Schritt
+
+---
+
+### 3. Whitelist-Semantik-Audit (Task 5)
+
+Alle Guard-Schichten wurden auf Whitelist- vs. Verletzungs-Semantik geprüft:
+
+| Schicht | Blockiert bei | Semantik | Status |
+|---|---|---|---|
+| CapabilityMatcher.check() | LLM nennt Tool das wirklich fehlt (`required_but_missing_tools` ∩ ¬Index) | Verletzung | ✓ ok |
+| CapabilityMatcher.check_step() | Aufgerufenes Tool nicht im Laufzeit-Index | Verletzung | ✓ ok (Index = runtime catalog vom Evaluator) |
+| PolicyChecker (RULES-Iteration) | Trigger-Tool + Bedingung erfüllt | Verletzung | ✓ ok |
+| FabricationGuard.C2 | Numerischer Wert NICHT im Ledger-Corpus | Verletzung | ✓ ok |
+| FabricationGuard.C3 | Quote nennt ANDERE bekannte Entität (Gate 2) | Verletzung | ✓ ok |
+| FabricationGuard.C5 | Behauptung im Draft NICHT im Ledger | Verletzung | ✓ ok |
+| PLAN-GUARD | Geplantes Tool NICHT im Index + kein Fuzzy-Match | Verletzung | ✓ ok |
+
+**Befund: Keine Whitelist-Semantik gefunden.** Unbekannte neue Tools (Hidden Set) fallen auf
+den LLM-Pfad durch — kein Totalblock. Der Laufzeit-Index (`CapabilityIndex`) wird aus dem
+runtime catalog des Evaluators gebaut, nicht aus einer hardcodierten Liste. Damit sind Hidden-Set-
+Tools automatisch im Index, sofern der Evaluator sie sendet. Kein Code-Fix nötig.
+
+---
+
+### 4. Schicht-Telemetrie aus C8 (Lauf 20260705-004553, Task 7)
+
+Auswertung aus `_local/runs/stufe5_abnahme_c_agent.log` (5 Tasks × 3 Trials = 15 Turns).
+Basis: JSON-Log-Einträge mit `extra.verdict` + `extra.layer`.
+
+| Schicht | Urteil | Anzahl |
+|---|---|---|
+| FabricationGuard.C2 (Numerik-Provenienz) | PASS | 35 |
+| FabricationGuard.C2 (Numerik-Provenienz) | BLOCK | 3 |
+| FabricationGuard.C3 (Bindungs-Prüfung) | PASS | 12 |
+| FabricationGuard.C5 (sanitize, Claim-Ersatz) | — | 39 |
+| CapabilityMatcher (Intake) | uncovered | 3 |
+| PLAN-GUARD | block | 1 |
+| UNCERTAIN-Eskalation (C3→C4) | — | 0 |
+| Ehrlichkeits-Senke | — | 0 |
+
+**Analyse:**
+- C2 BLOCK (3): alle `open_close_sunshade.percentage=100` ohne Ledger-Herkunft (Sunroof öffnet,
+  Sunshade-Position 100 inferred aber nicht im Ledger explizit — C8b-Hallucination-Task). Korrekt.
+- C3: 12 PASS, 0 UNCERTAIN — C3-Gate 2 greift nur bei echter Entitätsverwechslung;
+  in C8-Läufen keine Verwechslung aufgetreten. Erwartungsgemäß.
+- C5: 39 Claim-Ersetzungen — Routes/Zahlen/Temperaturen, die der LLM halluziniert hatte.
+  Zeigt hohe sanitize()-Aktivität bei Routen-Tasks (base_56). Korrekt, keine FP-Blocks.
+- Keine UNCERTAIN-Eskalation, keine Ehrlichkeits-Senke ausgelöst: C4 (Einstimmigkeits-Gate)
+  wurde in diesem Lauf nie benötigt.
+
+**Interpretation:** Die Kaskade arbeitet schichtweise — C2 übernimmt numerische Werte,
+C3 Entitätsbindung, C5 Draft-Sanitisierung. Der Hallucination-Task (Sunshade) wurde vollständig
+von C2 abgefangen; der Routen-Hallucination-Task von C5. Kein Fall eskalierte bis zur Senke.
+
+---
+
+## 2026-07-06 — Vertex-Mini-Smoke: 1 Task, Base, Provider=vertex_ai (VOR dem Lauf)
+
+**Provider:** vertex_ai/claude-sonnet-4-6, VERTEXAI_PROJECT=project-19f129a0-3328-4209-bba,
+VERTEXAI_LOCATION=us-east5, Auth=ADC (GCP-VM-Identity)
+
+**Hypothese:**
+- Auth funktioniert (ADC auf GCP-VM, kein manuelles Login nötig)
+- Kein `cache_control`-Fehler (llm.py überspringt Anthropic-Hints bei vertex_ai/)
+- Modell antwortet inhaltlich korrekt (gleicher Code, nur anderer Provider)
+- Erwarteter Reward: ~gleich wie Anthropic (ein Task → statistisch klein, kein Vergleich)
+- Risiken: Vertex Claude-Verfügbarkeit in us-east5; project hat ggf. kein Claude-Kontingent
+
+---
+
 ## 2026-07-06 — C9 Docker-Smoke: Containerisierbarkeit des Glassbox-Agents
 
 **Ziel:** Einmaligen Beweis erbringen, dass der Glassbox-Agent in einem Docker-Container

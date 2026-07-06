@@ -29,3 +29,4 @@ paper/
 
 # Claude Code Projektanweisungen (lokal, nie pushen)
 CLAUDE.md
+.env.*
