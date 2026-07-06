@@ -992,5 +992,92 @@ class FabricationGuardC7Test(unittest.TestCase):
         self.assertIn("PASS", verdicts)
 
 
+class LLMProviderTest(unittest.TestCase):
+    """Tests for provider-aware cache hints and transient-error retry/backoff."""
+
+    def test_cache_hints_applied_for_anthropic(self):
+        """cache_control is set on system message and last tool for anthropic/ models."""
+        from track_1_agent_under_test.glassbox.llm import _apply_cache_hints
+        msgs = [{"role": "system", "content": "sys"}]
+        tools = [{"function": {"name": "t1"}}, {"function": {"name": "t2"}}]
+        _apply_cache_hints(msgs, tools, "anthropic/claude-sonnet-4-6")
+        self.assertEqual(msgs[0].get("cache_control"), {"type": "ephemeral"})
+        self.assertEqual(tools[-1]["function"].get("cache_control"), {"type": "ephemeral"})
+        self.assertNotIn("cache_control", tools[0]["function"])
+
+    def test_cache_hints_skipped_for_vertex(self):
+        """cache_control is NOT set for vertex_ai/ models."""
+        from track_1_agent_under_test.glassbox.llm import _apply_cache_hints
+        msgs = [{"role": "system", "content": "sys"}]
+        tools = [{"function": {"name": "t1"}}]
+        _apply_cache_hints(msgs, tools, "vertex_ai/claude-sonnet-4-6")
+        self.assertNotIn("cache_control", msgs[0])
+        self.assertNotIn("cache_control", tools[0]["function"])
+
+    def test_cache_hints_skipped_for_gemini(self):
+        """cache_control is NOT set for other providers."""
+        from track_1_agent_under_test.glassbox.llm import _apply_cache_hints
+        msgs = [{"role": "system", "content": "sys"}]
+        _apply_cache_hints(msgs, None, "gemini/gemini-2.5-flash")
+        self.assertNotIn("cache_control", msgs[0])
+
+    def test_transient_error_retried_with_backoff(self):
+        """A transient RateLimitError triggers retry; succeeds on second attempt."""
+        import litellm.exceptions as exc_mod
+        from track_1_agent_under_test.glassbox.llm import _raw_completion
+        call_count = 0
+
+        def fake_completion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise exc_mod.RateLimitError(
+                    message="rate limit", llm_provider="anthropic", model="test"
+                )
+            return "ok"
+
+        with patch("track_1_agent_under_test.glassbox.llm.completion", fake_completion), \
+             patch("track_1_agent_under_test.glassbox.llm.time.sleep") as mock_sleep:
+            result = _raw_completion(model="anthropic/claude-sonnet-4-6", messages=[])
+        self.assertEqual(result, "ok")
+        self.assertEqual(call_count, 2)
+        mock_sleep.assert_called_once_with(2)  # first backoff = 2s
+
+    def test_non_transient_error_not_retried(self):
+        """A non-transient AuthenticationError is raised immediately, no retry."""
+        import litellm.exceptions as exc_mod
+        from track_1_agent_under_test.glassbox.llm import _raw_completion
+        call_count = 0
+
+        def fake_completion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise exc_mod.AuthenticationError(
+                message="bad key", llm_provider="anthropic", model="test"
+            )
+
+        with patch("track_1_agent_under_test.glassbox.llm.completion", fake_completion), \
+             patch("track_1_agent_under_test.glassbox.llm.time.sleep") as mock_sleep:
+            with self.assertRaises(exc_mod.AuthenticationError):
+                _raw_completion(model="anthropic/claude-sonnet-4-6", messages=[])
+        self.assertEqual(call_count, 1)
+        mock_sleep.assert_not_called()
+
+    def test_transient_error_exhausted_raises(self):
+        """After all backoff attempts, the transient error is re-raised."""
+        import litellm.exceptions as exc_mod
+        from track_1_agent_under_test.glassbox.llm import _raw_completion, _TRANSIENT_MAX_ATTEMPTS
+
+        def fake_completion(**kwargs):
+            raise exc_mod.ServiceUnavailableError(
+                message="503", llm_provider="anthropic", model="test"
+            )
+
+        with patch("track_1_agent_under_test.glassbox.llm.completion", fake_completion), \
+             patch("track_1_agent_under_test.glassbox.llm.time.sleep"):
+            with self.assertRaises(exc_mod.ServiceUnavailableError):
+                _raw_completion(model="anthropic/claude-sonnet-4-6", messages=[])
+
+
 if __name__ == "__main__":
     unittest.main()

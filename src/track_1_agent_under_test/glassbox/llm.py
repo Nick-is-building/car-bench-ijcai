@@ -5,7 +5,8 @@ Einheitlicher Aufruf mit:
 - Temperatur 0 (deterministisch)
 - JSON-Schema-Output (strukturierter Output)
 - Retry bei Fehlformat (max 2)
-- Prompt-Caching (anthropic ephemeral)
+- Prompt-Caching (anthropic ephemeral, nur bei anthropic/-Prefix)
+- Transient-Retry mit exponentiellem Backoff (2s/4s/8s) vor Eskalation
 """
 from __future__ import annotations
 
@@ -14,12 +15,26 @@ import time
 from contextvars import ContextVar
 from typing import Any, Type
 
+import litellm.exceptions as _llm_exc
 from litellm import completion
 from pydantic import BaseModel
 
 
 _DEFAULT_MODEL = os.getenv("AGENT_LLM", "anthropic/claude-sonnet-4-6")
 _MAX_RETRIES = 2
+
+# Fixed backoff delays (seconds) for transient errors: attempt 1→2s, 2→4s, 3→8s.
+_TRANSIENT_BACKOFF_S = (2, 4, 8)
+_TRANSIENT_MAX_ATTEMPTS = len(_TRANSIENT_BACKOFF_S) + 1
+
+_TRANSIENT_EXCEPTIONS = (
+    _llm_exc.Timeout,
+    _llm_exc.RateLimitError,
+    _llm_exc.ServiceUnavailableError,
+    _llm_exc.InternalServerError,
+    _llm_exc.APIConnectionError,
+    _llm_exc.BadGatewayError,
+)
 
 # Per-turn usage accumulator (set by the A2A layer, async-safe via ContextVar).
 # Keys: prompt_tokens, completion_tokens, thinking_tokens, cost, num_llm_calls,
@@ -31,9 +46,29 @@ def set_metrics_sink(sink: dict | None) -> None:
     _metrics_sink.set(sink)
 
 
+def _is_anthropic(model: str) -> bool:
+    """True iff the model string uses the direct Anthropic provider."""
+    return model.startswith("anthropic/")
+
+
+def _raw_completion(**kwargs) -> Any:
+    """Single completion call with transient-error retry + exponential backoff."""
+    last_exc: Exception | None = None
+    for attempt in range(_TRANSIENT_MAX_ATTEMPTS):
+        try:
+            return completion(**kwargs)
+        except _TRANSIENT_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt < len(_TRANSIENT_BACKOFF_S):
+                time.sleep(_TRANSIENT_BACKOFF_S[attempt])
+            else:
+                raise
+    raise last_exc  # unreachable but satisfies type checker
+
+
 def _completion_with_metrics(**kwargs) -> Any:
     start = time.perf_counter()
-    resp = completion(**kwargs)
+    resp = _raw_completion(**kwargs)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
     sink = _metrics_sink.get()
@@ -59,13 +94,13 @@ def call_structured(
     tools: list[dict] | None = None,
     temperature: float = 0.0,
 ) -> BaseModel:
-    """
-    Call LLM and parse response into a Pydantic schema.
+    """Call LLM and parse response into a Pydantic schema.
     Retries up to _MAX_RETRIES times on parse failure.
+    Transient network/rate errors are retried with fixed backoff before escalating.
     """
     mdl = model or _DEFAULT_MODEL
     msgs = _with_system(messages, system)
-    _apply_cache_hints(msgs, tools)
+    _apply_cache_hints(msgs, tools, mdl)
 
     last_err: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
@@ -100,13 +135,12 @@ def call_tool_use(
     system: str | None = None,
     temperature: float = 0.0,
 ) -> dict:
-    """
-    Call LLM in native tool-use mode.
+    """Call LLM in native tool-use mode.
     Returns the raw choice message as a dict.
     """
     mdl = model or _DEFAULT_MODEL
     msgs = _with_system(messages, system)
-    _apply_cache_hints(msgs, tools)
+    _apply_cache_hints(msgs, tools, mdl)
 
     resp = _completion_with_metrics(
         model=mdl,
@@ -125,8 +159,10 @@ def _with_system(messages: list[dict], system: str | None) -> list[dict]:
     return [{"role": "system", "content": system}] + messages
 
 
-def _apply_cache_hints(messages: list[dict], tools: list[dict] | None) -> None:
-    """Add anthropic prompt-caching hints to system message and last tool."""
+def _apply_cache_hints(messages: list[dict], tools: list[dict] | None, model: str) -> None:
+    """Add Anthropic prompt-caching hints. Skipped for non-anthropic/ providers."""
+    if not _is_anthropic(model):
+        return
     if messages and messages[0].get("role") == "system":
         messages[0]["cache_control"] = {"type": "ephemeral"}
     if tools:
