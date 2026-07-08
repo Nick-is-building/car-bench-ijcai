@@ -435,5 +435,96 @@ class NullFalsePositiveTest(unittest.TestCase):
         self.assertEqual(pf.notes, [])
 
 
+# ---------------------------------------------------------------------------
+# requires_confirmation — LLM-POL:008 adverse-weather confirmation gate (OI-007)
+# ---------------------------------------------------------------------------
+
+def observe_weather(ledger: Ledger, condition: str) -> None:
+    """Record a SUCCESS get_weather result in the real current_slot.condition shape."""
+    global _cid
+    _cid += 1
+    cid = f"wx_{_cid}"
+    ledger.add_tool_call("get_weather", {}, cid)
+    ledger.add_tool_result(
+        "get_weather",
+        json.dumps({"status": "SUCCESS",
+                    "result": {"current_slot": {"condition": condition},
+                               "next_slot": None}}),
+        cid,
+    )
+
+
+class WeatherConfirmationTest(unittest.TestCase):
+    # --- violation → BLOCK + Rückfrage ---
+    def test_adverse_weather_sunroof_requests_confirmation(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
+        self.assertNotIn(c, pf.kept)
+        self.assertEqual(pf.blocked, [])
+        self.assertEqual(pf.missing_capability, [])
+        self.assertIn("sunroof", pf.confirmations[0].question.lower())
+        self.assertIn("rainy", pf.confirmations[0].question.lower())
+
+    def test_fog_thunderstorm_requests_confirmation(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "cloudy_and_thunderstorm")
+        c = call("set_fog_lights", {"on": True})
+        pf = pre_flight([c], ledger)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
+        self.assertNotIn(c, pf.kept)
+
+    # --- benign weather → no block (Null-FP!) ---
+    def test_benign_weather_sunroof_no_confirmation(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "sunny")      # in the allowed set for sunroof
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.confirmations, [])
+        self.assertIn(c, pf.kept)
+
+    def test_fog_rainy_no_confirmation(self):
+        # fog gate triggers only on thunderstorm/hail; rainy is benign for fog
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")
+        pf = pre_flight([call("set_fog_lights", {"on": True})], ledger)
+        self.assertEqual(pf.confirmations, [])
+
+    def test_unknown_weather_never_asks(self):
+        # Null-FP: no weather observation in the ledger at all
+        ledger = make_ledger()
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.confirmations, [])
+
+    def test_closing_sunroof_never_asks(self):
+        # when=_is_opening_strict → closing (percentage 0) does not trigger
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")
+        c = call("open_close_sunroof", {"percentage": 0})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.confirmations, [])
+
+    # --- confirmation already in the ledger → PASS ---
+    def test_confirmation_in_ledger_passes(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")       # turn 1
+        ledger.add_user_turn("Yes, go ahead.")  # turn 2 → explicit confirmation
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.confirmations, [])
+        self.assertIn(c, pf.kept)
+
+    def test_affirmative_before_weather_does_not_count(self):
+        # a "yes" in the same/earlier turn as the weather read is not a confirmation
+        ledger = make_ledger()               # user turn 1 "Please do the thing."
+        observe_weather(ledger, "rainy")     # weather read also in turn 1
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
+
+
 if __name__ == "__main__":
     unittest.main()

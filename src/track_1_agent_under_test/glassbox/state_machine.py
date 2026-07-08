@@ -322,6 +322,16 @@ class StateMachine:
                 ))
                 ctx.policy_violations = pf.blocked
                 return self._respond_policy_block(ctx)
+            if pf.confirmations:
+                # OI-007: adverse-weather (or other) confirmation gate — deterministic
+                # BLOCK whose correction is a targeted Rückfrage, not a refusal.
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="PolicyChecker.confirmation",
+                    reason=f"confirmation required: "
+                           f"{[c.policy_id for c in pf.confirmations]}",
+                ))
+                ctx.policy_violations = pf.confirmations
+                return self._respond_confirmation(ctx, pf.confirmations)
             ctx.layer_decisions.append(GuardResult(
                 verdict="PASS", layer="PolicyChecker.preflight",
                 reason=f"notes={len(pf.notes)} injected={len(pf.injected)}",
@@ -424,6 +434,13 @@ class StateMachine:
             "Could you confirm the exact setting you have in mind?"
         )
         return self._finish(ctx, text)
+
+    def _respond_confirmation(self, ctx: TurnContext, confirmations: list) -> Action:
+        """OI-007: emit the targeted confirmation question and end the turn.
+        The user's reply is recorded in the ledger; next turn the same rule sees
+        the confirmation and lets the call through."""
+        ctx.transition(State.RESPOND)
+        return self._finish(ctx, confirmations[0].question)
 
     def _respond_refusal(self, ctx: TurnContext) -> Action:
         from . import prompts

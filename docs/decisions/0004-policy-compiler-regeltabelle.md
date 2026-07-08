@@ -25,8 +25,8 @@ Vorbedingungs-Guard + semantischer Rest · **(C)** inhärent semantisch.
 | LLM-POL:004 | REQUIRES_CONFIRMATION-Tools: erst explizites „yes“ | B | Flag deterministisch aus Tool-Beschreibungs-Präfix ableitbar; Confirmation-Handshake-Guard entworfen, **v1 nicht implementiert** (→ OI-007) | Erkennung, ob die Nutzeräußerung eine Bestätigung ist |
 | AUT-POL:005 | Sunroof nur wenn Sunshade voll offen oder parallel geöffnet | A | ✅ `companion_available` (Verfügbarkeit) + `state_companion` (Sunshade=100 erzwingen/injizieren) | — |
 | LLM-POL:007 | Fenster >25 % bei AC an → Warnung + Confirmation | B | ✅ Trigger-Erkennung (Args + bekannter AC-Zustand) → Obligation-Note an VERIFY; Handshake wie 004 → OI-007 | Warntext, Bestätigungsdialog |
-| LLM-POL:008 | Confirmation bei widrigem Wetter (Paar mit 009) | B | (siehe 009) | Bestätigungsdialog |
-| AUT-POL:009 | Wetter muss vor Sunroof-Öffnen / Fog-Lights manuell geprüft sein | B | ✅ `prior_observation`: `get_weather`-Result muss im Ledger stehen, sonst Injektion des Reads (Args deterministisch aus CURRENT_LOCATION/DATETIME) | Bewertung „widrig“ → Confirmation (008) |
+| LLM-POL:008 | Confirmation bei widrigem Wetter (Paar mit 009) | ~~B~~ **A** | ✅ `requires_confirmation` (OI-007, Auftrag D): letzte `get_weather`-Condition im Ledger deterministisch gegen die veröffentlichten Wetter-Mengen geprüft (Sunroof: nicht in {sunny, cloudy, partly_cloudy}; Fog: in {cloudy_and_thunderstorm, cloudy_and_hail}) → ohne User-„yes“ im Ledger BLOCK → Rückfrage | — (Reklassifiziert B→A, siehe unten) |
+| AUT-POL:009 | Wetter muss vor Sunroof-Öffnen / Fog-Lights manuell geprüft sein | ~~B~~ **A** | ✅ `prior_observation`: `get_weather`-Result muss im Ledger stehen, sonst Injektion des Reads (Args deterministisch aus CURRENT_LOCATION/DATETIME). Der frühere semantische Rest („Bewertung widrig → Confirmation“) ist jetzt via 008 deterministisch. | — |
 | AUT-POL:010 | Defrost front/all → Fan≥2, Richtung WINDSHIELD, AC an | A | ✅ `state_companion`: Zustand beobachten (get_climate_settings), fehlende Begleit-Calls injizieren | — |
 | AUT-POL:011 | AC an → Fenster >20 % schließen, Fan 1 falls 0 | A | ✅ `state_companion` (get_vehicle_window_positions + get_climate_settings) | — |
 | LLM-POL:012 | Einzelzonen-Temperatur mit >3 °C Differenz → informieren | B | Differenz nur berechenbar, wenn beide Zonentemperaturen im Ledger bekannt; **v1 nicht implementiert** (→ OI-008) | Inform-Text |
@@ -41,10 +41,15 @@ Vorbedingungs-Guard + semantischer Rest · **(C)** inhärent semantisch.
 | AUT-POL:023 | Kalender nur für den aktuellen Tag | A | ✅ `value_bound`: month/day == DATETIME aus Task-Kontext | — |
 | AUT-POL:024 | Wetter nur für den aktuellen Tag (mit Uhrzeit) | A | ✅ `value_bound`: month/day == DATETIME (Uhrzeit-Pflicht deckt das Schema/check_step) | — |
 
-**Bilanz:** 9× A, 7× B, 3× C. Von den 9 A-Policies sind alle 9 in v1 als Regel-Tabellen-
-Einträge implementiert; von den 7 B-Policies sind die deterministischen Guards für
-007 (Note), 008/009, 018 implementiert, für 004, 012, 016 entworfen aber bewusst
-zurückgestellt (siehe open_issues OI-007/008/009).
+**Bilanz (Auftrag B):** 9× A, 7× B, 3× C.
+
+**Reklassifizierung Auftrag D (OI-007):** LLM-POL:008 und AUT-POL:009 (das Wetter-Paar)
+wandern von **B → A**. Begründung: Mit dem neuen generischen Regeltyp
+`requires_confirmation` ist der Confirmation-Trigger *und* die Bestätigungs-Erkennung
+jetzt vollständig deterministisch gegen den Ledger prüfbar (letzte `get_weather`-Condition
+gegen die veröffentlichten Wetter-Mengen; explizites User-„yes“ als Ledger-Eintrag nach
+der Wetter-Beobachtung). Es bleibt kein semantischer Rest, der an LLM/Judge hängt.
+**Neue Bilanz: 11× A, 5× B, 3× C.** Verbleibende B: 004, 007, 012, 016, 018.
 
 ## Entscheidung
 
@@ -64,6 +69,7 @@ den Daten** (Regel-Einträge, Effekt-Tabelle, Parser-Tabelle).
 | `value_bound` | Parameter muss dynamischer Schranke genügen (z. B. == heutiges Datum) | Block → Policy-Ablehnung |
 | `no_parallel` | Max. 1 Call einer Gruppe pro Batch | erster Call bleibt, Rest wird auf Folgerunde verschoben |
 | `obligation_note` | Trigger erzeugt markierte Pflicht-Notiz an PLAN/VERIFY (semantischer Rest der B-Policies) | keine Blockade |
+| `requires_confirmation` | `requires_confirmation_if(tool, condition)`: hält `condition` (deterministisch gegen Ledger) und liegt keine explizite User-Bestätigung im Ledger, wird der Trigger zurückgehalten | BLOCK → gezielte Rückfrage (kein Refusal); nächster Turn erkennt die Bestätigung und lässt den Call durch |
 
 ### Zustandsableitung (deterministisch, nur aus dem Ledger)
 
@@ -88,8 +94,15 @@ letzte Sicherung (ADR-0003).
   PLAN- und VERIFY-System-Prompts aufgenommen. Das ist eine bewusste Grenze des
   Compilers: Inhaltspflichten in freiem Text sind nicht deterministisch erzwingbar,
   ohne die Antwortgenerierung selbst zu deterministisieren.
-- Confirmation-Handshake (004/007/008): erfordert Intake-Signal „Nutzer bestätigt“ +
-  Zustandsmaschinen-Erweiterung; zurückgestellt auf eigenen Auftrag (OI-007).
+- Confirmation-Handshake: **008/009 in Auftrag D deterministisch gelöst** (`requires_confirmation`,
+  siehe Reklassifizierung oben) — der Handshake läuft über den Ledger und die
+  Zustandsmaschine (`_respond_confirmation`), ohne Zustandsmaschinen-Sonderzustand: die
+  Rückfrage beendet den Turn, die Bestätigung des Folge-Turns liegt als User-Ledger-Eintrag
+  vor und wird beim Re-Plan deterministisch erkannt. Die Bestätigungs-Erkennung ist ein
+  konservativer Schlüsselwort-Gate (Affirmative-Menge, Negation voidet — lieber erneut
+  fragen als eine unsichere Aktion auslösen). Für **004** (REQUIRES_CONFIRMATION-Tools) und
+  **007** (Fenster >25 % + AC) ist derselbe Regeltyp direkt anwendbar (weitere Daten-Einträge),
+  in v1 aber noch nicht bestückt.
 - Trigger-Asymmetrie AUT-POL:005: Die Wert-Durchsetzung (Sunshade=100) greift nur,
   wenn der geplante Call das echte Schema (`percentage`) verwendet; die
   Verfügbarkeitsprüfung greift bei jedem Sunroof-Call. Grund: Die Regeln sind auf

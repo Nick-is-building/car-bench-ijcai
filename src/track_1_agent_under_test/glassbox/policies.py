@@ -319,6 +319,20 @@ class ObligationNoteRule:
     when: Callable[[dict], bool] | None = None
 
 
+@dataclass
+class RequiresConfirmationRule:
+    """Generic requires_confirmation_if(tool, condition): when `condition` holds
+    (checked deterministically against the ledger), the trigger call may only run
+    if an explicit user confirmation is already in the ledger. Otherwise the call
+    is held back and a targeted question is emitted (BLOCK → Rückfrage). OI-007."""
+    policy_id: str
+    trigger_tool: str
+    condition: Callable[[Ledger], bool]    # confirmation required (env precondition holds)?
+    confirmed: Callable[[Ledger], bool]    # explicit user confirmation already present?
+    question: Callable[[Ledger], str]      # the Rückfrage to emit when not yet confirmed
+    when: Callable[[dict], bool] | None = None   # over call args
+
+
 def _num(v: Any) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
@@ -359,6 +373,84 @@ def _current_day_bound(param_month: str, param_day: str) -> Callable[[dict, Task
                 return f"{param}={got} requested, but only the current day ({key}={want}) is allowed"
         return None
     return check
+
+
+# --- OI-007 confirmation gate: deterministic weather + confirmation reading ---
+# Published weather semantics (wiki.md, LLM-POL:008 / AUT-POL:009):
+#   sunroof-open  → confirmation UNLESS condition in {sunny, cloudy, partly_cloudy}
+#   fog lights on → confirmation IF condition in {cloudy_and_thunderstorm, cloudy_and_hail}
+_SUNROOF_OK_WEATHER = frozenset({"sunny", "cloudy", "partly_cloudy"})
+_FOG_ADVERSE_WEATHER = frozenset({"cloudy_and_thunderstorm", "cloudy_and_hail"})
+
+_AFFIRMATIVE_WORDS = frozenset({
+    "yes", "yep", "yeah", "yup", "ok", "okay", "confirm", "confirmed",
+    "proceed", "affirmative",
+})
+_AFFIRMATIVE_PHRASES = (
+    "go ahead", "do it", "go for it", "please do", "sounds good",
+    "that's fine", "thats fine",
+)
+# A negation anywhere in the reply voids the confirmation — a false positive
+# here would execute an unsafe action, so err towards asking again.
+_NEGATION_WORDS = frozenset({
+    "no", "nope", "not", "dont", "don't", "cancel", "stop", "never", "wait",
+    "instead", "actually",
+})
+
+
+def _last_weather(ledger: Ledger) -> tuple[str | None, int | None]:
+    """Most recent get_weather current_slot.condition + the turn it landed in.
+    (None, None) if no successful weather observation exists (→ unknown, Null-FP)."""
+    for e in reversed(ledger.entries):
+        if e.kind == "tool_result" and e.tool_name == "get_weather":
+            payload = _parse_result_payload(e.content)
+            if payload and payload.get("status") == "SUCCESS":
+                result = payload.get("result")
+                slot = result.get("current_slot") if isinstance(result, dict) else None
+                cond = slot.get("condition") if isinstance(slot, dict) else None
+                if isinstance(cond, str):
+                    return cond, e.turn
+    return None, None
+
+
+def _has_affirmative(text: str) -> bool:
+    t = text.lower()
+    words = set(re.findall(r"[a-z']+", t))
+    if words & _NEGATION_WORDS:
+        return False
+    return bool(_AFFIRMATIVE_WORDS & words) or any(p in t for p in _AFFIRMATIVE_PHRASES)
+
+
+def _weather_confirmed(ledger: Ledger) -> bool:
+    """Explicit user confirmation in a user turn AFTER the weather was observed."""
+    _, weather_turn = _last_weather(ledger)
+    if weather_turn is None:
+        return False
+    return any(
+        e.kind == "user" and e.turn > weather_turn and _has_affirmative(str(e.content))
+        for e in ledger.entries
+    )
+
+
+def _sunroof_weather_adverse(ledger: Ledger) -> bool:
+    cond, _ = _last_weather(ledger)
+    return cond is not None and cond not in _SUNROOF_OK_WEATHER
+
+
+def _fog_weather_adverse(ledger: Ledger) -> bool:
+    cond, _ = _last_weather(ledger)
+    return cond is not None and cond in _FOG_ADVERSE_WEATHER
+
+
+def _weather_confirmation_question(action: str) -> Callable[[Ledger], str]:
+    def build(ledger: Ledger) -> str:
+        cond, _ = _last_weather(ledger)
+        shown = (cond or "adverse").replace("_", " ")
+        return (
+            f"The weather at your current location is '{shown}', which requires your "
+            f"confirmation before {action}. Do you want me to proceed anyway?"
+        )
+    return build
 
 
 NAV_EDIT_TOOLS = frozenset({
@@ -459,6 +551,25 @@ RULES: list[Any] = [
         when=_is_on,
         observe_tool="get_weather",
         build_args=_weather_args,
+    ),
+    # --- LLM-POL:008 — adverse-weather confirmation gate (OI-007) ---
+    # Weather is guaranteed known here: AUT-POL:009 (above) defers the trigger
+    # until get_weather sits in the ledger. Unknown weather → condition False → pass.
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:008",
+        trigger_tool="open_close_sunroof",
+        when=_is_opening_strict,
+        condition=_sunroof_weather_adverse,
+        confirmed=_weather_confirmed,
+        question=_weather_confirmation_question("opening the sunroof"),
+    ),
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:008",
+        trigger_tool="set_fog_lights",
+        when=_is_on,
+        condition=_fog_weather_adverse,
+        confirmed=_weather_confirmed,
+        question=_weather_confirmation_question("switching on the fog lights"),
     ),
     # --- AUT-POL:005 value aspect — sunshade must be FULLY open (100) ---
     StateCompanionRule(
@@ -593,12 +704,23 @@ class Injection:
 
 
 @dataclass
+class ConfirmationRequest:
+    """A state-changing call held back until the user confirms (OI-007).
+    Deterministic BLOCK whose correction is a targeted question (Rückfrage)."""
+    policy_id: str
+    tool: str
+    question: str
+    reason: str = ""
+
+
+@dataclass
 class PreFlightResult:
     kept: list = field(default_factory=list)         # original call objects, order kept
     injected: list[Injection] = field(default_factory=list)
     deferred: list = field(default_factory=list)     # postponed to a later plan round
     blocked: list[PolicyViolation] = field(default_factory=list)
     missing_capability: list[PolicyViolation] = field(default_factory=list)
+    confirmations: list[ConfirmationRequest] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -803,6 +925,24 @@ def _eval_obligation_note(rule: ObligationNoteRule, env: _Env) -> None:
             env.result.notes.append(note)
 
 
+def _eval_requires_confirmation(rule: RequiresConfirmationRule, env: _Env) -> None:
+    for call in _triggers(rule, env):
+        if call not in env.result.kept:
+            continue
+        if not rule.condition(env.ledger):        # precondition absent/unknown → Null-FP
+            continue
+        if rule.confirmed(env.ledger):            # user already said yes → proceed
+            continue
+        env.result.kept.remove(call)
+        env.result.confirmations.append(ConfirmationRequest(
+            policy_id=rule.policy_id,
+            tool=call.tool,
+            question=rule.question(env.ledger),
+            reason=f"{rule.policy_id}: {call.tool} needs explicit user confirmation "
+                   f"under the current weather conditions",
+        ))
+
+
 _EVALUATORS: dict[type, Callable[[Any, _Env], None]] = {
     CompanionAvailableRule: _eval_companion_available,
     ValueBoundRule: _eval_value_bound,
@@ -811,6 +951,7 @@ _EVALUATORS: dict[type, Callable[[Any, _Env], None]] = {
     StateCompanionRule: _eval_state_companion,
     NoParallelRule: _eval_no_parallel,
     ObligationNoteRule: _eval_obligation_note,
+    RequiresConfirmationRule: _eval_requires_confirmation,
 }
 
 

@@ -4,6 +4,56 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Auftrag D Phase 1: OI-007 als generischer Regeltyp (requires_confirmation)
+
+**Motivation:** OI-007 (Wetter-Confirmation vor state-changing Call) war die letzte
+B-klassifizierte Policy mit LLM-vertrauendem Pfad in den fehlgeschlagenen base_10-Trials
+(Lauf 3/4: fog lights ohne Confirmation). Statt eines Sonderfalls im Kontrollfluss wird
+ein **generischer Regeltyp** in die deklarative RULES-Tabelle gehoben — Toolnamen nur in
+Daten, nie im Kontrollfluss (wie B2). Kein LLM-Lauf, reine Code-Änderung.
+
+**Hypothese (vor Implementierung):**
+- Ein `RequiresConfirmationRule(trigger_tool, condition, confirmed, question, when)` deckt
+  die Wetter-Confirmation deterministisch ab: `condition(ledger)` liest die jüngste
+  get_weather-Beobachtung aus dem Ledger, `confirmed(ledger)` prüft einen expliziten
+  User-Turn nach der Beobachtung. Trifft die Bedingung ohne Confirmation → BLOCK, dessen
+  Korrektur eine gezielte Rückfrage ist (kein Refusal).
+- **Null-FP:** Unbekanntes/benignes Wetter (sunny/cloudy/partly_cloudy) blockt nie;
+  unbekanntes Wetter (keine Beobachtung im Ledger) blockt nie.
+- Cross-Turn ohne neuen State-Machine-Zustand: AUT-POL:009 (PriorObservationRule) hält den
+  Trigger bereits zurück bis get_weather im Ledger liegt → Wetter ist beim Feuern der
+  Confirmation-Regel garantiert bekannt; die Rückfrage beendet den Turn, das „yes" im
+  nächsten Turn wird beim Re-Plan deterministisch erkannt.
+
+**Umsetzung:**
+- `policies.py`: `ConfirmationRequest`-Dataclass, `RequiresConfirmationRule`, Helfer
+  (`_last_weather`, `_has_affirmative` mit Negations-Guard, `_weather_confirmed`,
+  Wetter-Mengen), zwei RULES-Einträge (LLM-POL:008 sunroof-opening + fog-lights-on),
+  `_eval_requires_confirmation` (entfernt Trigger aus `kept`, hängt ConfirmationRequest an),
+  `confirmations`-Feld in `PreFlightResult`.
+- `state_machine.py`: `pf.confirmations`-Zweig im `_plan_execute_loop` →
+  GuardResult(BLOCK, layer=`PolicyChecker.confirmation`) + `_respond_confirmation`
+  (beendet Turn mit der Rückfrage).
+- `tests/test_glassbox_policies.py`: `WeatherConfirmationTest`, 8 Tests (adverse fordert
+  Confirmation; benign/unbekannt fordert nie; Closing fordert nie; Confirmation im Ledger
+  → PASS; Affirmativ VOR der Wetterbeobachtung zählt nicht).
+
+**Ergebnis:**
+- Policy-Tests **38 passed**, Gesamt-Suite **124 passed / 2 failed** — die 2 Fails sind die
+  vorbestehenden OI-010-Infrastrukturfehler (test_a2a_response_contract.py), keine Regression
+  (+8 neue Tests gegenüber 116).
+- **ADR-0004:** LLM-POL:008 + AUT-POL:009 (Wetter-Confirmation) von **B → A** reklassifiziert
+  (Regeltyp-Erweiterung, nicht Sonderfall). Bilanz jetzt **11× A, 5× B, 3× C**.
+- **claims.md:** neue Zeile Policy-Abdeckung nach Auftrag D (11/19 deterministisch),
+  `tab:policy-coverage`.
+- **OI-007 geschlossen** (behoben durch 008/009).
+
+**Hypothese: BESTÄTIGT** — deterministischer Confirmation-Handshake ohne neuen
+State-Machine-Zustand, Null-FP durch Testabdeckung belegt. Kein Eval-Lauf in dieser Phase
+(Wirkung auf base_10 wird im Abnahme-Lauf D gemessen).
+
+---
+
 ## 2026-07-07 — C9 Docker-Smoke: Ergebnis (Containerfähigkeit BEWIESEN)
 
 **Provider:** anthropic/claude-sonnet-4-6 (AGENT_CLASS=glassbox), Judge/User-Sim=gemini-2.5-flash.

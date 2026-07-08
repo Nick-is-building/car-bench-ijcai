@@ -85,8 +85,29 @@ gibt es keinen deterministischen Pfad (→ OI-001).
 
 ---
 
-## OI-007 — Confirmation-Handshake (LLM-POL:004 / 007 / 008) nicht deterministisch
-**Entdeckt:** 2026-07-04 (Auftrag B, ADR-0004)  **Stufe:** 4  **Priorität:** hoch
+## OI-007 — Confirmation-Handshake (LLM-POL:004 / 007 / 008) nicht deterministisch ✅ BEHOBEN (008/009)
+**Entdeckt:** 2026-07-04 (Auftrag B, ADR-0004)  **Behoben:** 2026-07-08 (Auftrag D, Phase 1)  **Stufe:** 4  **Priorität:** hoch
+
+**Behoben durch:** Neuer generischer Regeltyp `requires_confirmation_if(tool, condition)`
+in der RULES-Tabelle (`RequiresConfirmationRule` in policies.py). Erster Daten-Eintrag:
+Wetter-Confirmation (LLM-POL:008/AUT-POL:009). `condition` prüft die letzte
+`get_weather`-Condition im Ledger deterministisch gegen die veröffentlichten Wetter-Mengen
+(Sunroof: nicht in {sunny, cloudy, partly_cloudy}; Fog: in {cloudy_and_thunderstorm,
+cloudy_and_hail}). Ohne explizites User-„yes“ im Ledger (nach der Wetter-Beobachtung,
+Negation voidet) → `ConfirmationRequest` → State-Machine `_respond_confirmation` gibt eine
+gezielte Rückfrage aus und beendet den Turn; die Bestätigung des Folge-Turns liegt als
+User-Ledger-Eintrag vor und wird beim Re-Plan deterministisch erkannt (kein Sonderzustand
+nötig). GuardResult-Telemetrie: `PolicyChecker.confirmation` BLOCK. Unbekanntes Wetter →
+kein Block (Null-FP). Tests: `WeatherConfirmationTest` (8, grün). ADR-0004: 008/009 B→A
+reklassifiziert, Paper-Zeile in claims.md.
+
+**Noch offen (kein Blocker):** LLM-POL:004 (REQUIRES_CONFIRMATION-Tools) und LLM-POL:007
+(Fenster >25 % + AC) sind mit demselben Regeltyp als weitere Daten-Einträge abbildbar,
+in v1 aber noch nicht bestückt → als eigener kleiner Daten-Einschub nachziehbar.
+
+---
+
+### OI-007 (Original-Beschreibung, historisch)
 
 Drei Policies verlangen ein explizites Nutzer-„yes" VOR der Ausführung:
 LLM-POL:004 (REQUIRES_CONFIRMATION-Tools), LLM-POL:007 (Fenster >25 % bei AC an),
