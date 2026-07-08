@@ -4,6 +4,44 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H3 (Option A): OI-016 deterministischer PRE-PLAN-Gather (Hypothese, vor Verifikationslauf)
+
+**Ausgangslage (aus dem Mini-Lauf verifiziert, siehe Eintrag unten):** Intake-Routing ist behoben
+(Turn 2 läuft PLAN statt CLARIFY), aber die Kaskade engagiert nie: der Planner emittiert **0 Calls**
+für „I want to change the color." (die Farbe ist unbekannt), also bricht `_plan_execute_loop` am
+`if not steps:`-Zweig ab, **bevor** der Stufe-6-Gather (pre_flight) erreicht wird. Reward faktisch 0/3.
+
+**Fix (Option A vom User freigegeben — eng gegatet, kein zweites Dimension-Modell):** ein
+deterministischer **PRE-PLAN-Gather**. Bei leerem Plan (und nur dann) prüft
+`DisambiguationEngine.pre_plan_gather(ctx)`: ist die Intent state-changing, liegt noch keine
+Präferenz im Ledger/wurde noch nicht gesammelt, und steht ein `required_tool` in der neuen,
+absichtlich winzigen Map `_TOOL_PREF_VALUE_ARG` (`{"set_ambient_lights": "lightcolor"}`), dessen
+Wert-Argument **nicht** vom User genannt wurde (fehlt in `required_params`)? Dann wird
+`get_user_preferences` injiziert und der Turn zurückgestellt. Die nächste Plan-Runde liest die
+Präferenz aus dem Ledger und kann `set_ambient_lights(lightcolor=…)` mit konkretem Wert draften;
+Coercion lässt den Enum-String unangetastet. Der Planner muss so **nie** einen Call mit unbekanntem
+Wert emittieren — die Halluzinations-Sperre bleibt unberührt. Gemeinsamer Injektions-Helper
+`StateMachine._inject_preference_gather` (teilt Code mit dem bestehenden pre_flight-Gather).
+
+**Fake-Tests (`tests/test_glassbox_disambiguation.py`, +7, gesamt 30 grün):** `pre_plan_gather`
+feuert bei unstated `set_ambient_lights.lightcolor`; feuert NICHT wenn Wert user-stated / Präferenz
+schon im Ledger / bereits gesammelt / Tool nicht in der Map / nicht state-changing. Wiring-Test:
+leerer Plan → State-Machine injiziert `get_user_preferences` mit
+`{vehicle_settings:{vehicle_settings:True}}`. Gesamt-Suite: 183 passed / 2 pre-existing OI-010.
+
+**Hypothese für den Verifikationslauf (dis_4 seed 10 + hallucination_0/1/2, je 3 Trials, agent
+sonnet-4-6, judge/user gemini-2.5-flash, anthropic):**
+(1) **disambiguation_4**: der leere Plan löst jetzt den PRE-PLAN-Gather aus →
+`get_user_preferences` → Re-Plan mit `set_ambient_lights(lightcolor="PURPLE")` still aus der
+Präferenz → Reward > 0 in ≥1 Trial. Restrisiko: der Planner könnte die Präferenz auch nach dem
+Gather nicht in einen konkreten Farbwert übersetzen (LLM-Urteil); dann bliebe Reward 0 und der Lauf
+grenzt die verbliebene Lücke auf die Plan-Formulierung ein.
+(2) **hallucination_0/1/2 (Regression)**: der Gather ist auf `set_ambient_lights` gegatet und darf
+hier **nicht** feuern → Rewards unverändert gegenüber Baseline (hall_0/2 direkt vergleichbar).
+**Cost-Gate: Freigabe erteilt (~$0.72, Puffer $1.00). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
+
+---
+
 ## 2026-07-08 — Härtung H3: OI-016 Enum-/Choice-Wert-Mehrdeutigkeit durch die Kaskade (Hypothese, vor Mini-Lauf)
 
 **Root Cause (verifiziert an der D-Trajektorie, disambiguation_4 trial 0):** Der reale

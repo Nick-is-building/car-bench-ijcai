@@ -243,6 +243,33 @@ class StateMachine:
 
     # --- PLAN → POLICY_CHECK → EXECUTE (bounded loop, ADR-0002) ---
 
+    def _inject_preference_gather(self, ctx: TurnContext, inject_args: dict):
+        """Emit a single get_user_preferences call and defer the turn.
+
+        Shared by the pre-flight gather (Stufe 6) and the pre-plan gather
+        (OI-016). Returns an EmitToolCalls action, or None when the gather
+        already ran this turn (caller should fall through / re-plan).
+        """
+        from .guard import GuardResult
+        ctx.preferences_gathered = True
+        gather = PlannedCall(
+            tool="get_user_preferences",
+            arguments=inject_args,
+            call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_pref",
+            rationale="disambiguation: retrieve learned preferences (Stufe 6)",
+        )
+        ctx.layer_decisions.append(GuardResult(
+            verdict="UNCERTAIN", layer="Disambiguation.gather",
+            reason="preferences required before resolving under-specified argument",
+        ))
+        ctx.transition(State.EXECUTE)
+        if gather.signature not in ctx.executed_signatures:
+            ctx.ledger.add_tool_call(gather.tool, gather.arguments, gather.call_id)
+            ctx.executed_signatures.add(gather.signature)
+            ctx.pending_calls = [gather]
+            return EmitToolCalls([gather])
+        return None
+
     def _plan_execute_loop(self, ctx: TurnContext, matcher) -> Action:
         from . import prompts
 
@@ -267,6 +294,16 @@ class StateMachine:
                     # PLAN-GUARD note instead of refusing (B6 root cause)
                     ctx.capability_rebuttals += 1
                     continue
+                # OI-016: the planner cannot draft a call because a required
+                # state-changing tool needs a preference-driven value (e.g. the
+                # ambient-light color). Gather the preference, then re-plan so
+                # the cascade can supply the value — instead of giving up here.
+                from .disambiguation import DisambiguationEngine
+                gather_args = DisambiguationEngine().pre_plan_gather(ctx)
+                if gather_args is not None:
+                    action = self._inject_preference_gather(ctx, gather_args)
+                    if action is not None:
+                        return action
                 break
 
             calls: list[PlannedCall] = []
@@ -362,23 +399,9 @@ class StateMachine:
             from .disambiguation import DisambiguationEngine
             dis = DisambiguationEngine().pre_flight(ctx, calls)
             if dis.inject_preferences is not None:
-                ctx.preferences_gathered = True
-                gather = PlannedCall(
-                    tool="get_user_preferences",
-                    arguments=dis.inject_preferences,
-                    call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_pref",
-                    rationale="disambiguation: retrieve learned preferences (Stufe 6)",
-                )
-                ctx.layer_decisions.append(GuardResult(
-                    verdict="UNCERTAIN", layer="Disambiguation.gather",
-                    reason="preferences required before resolving under-specified argument",
-                ))
-                ctx.transition(State.EXECUTE)
-                if gather.signature not in ctx.executed_signatures:
-                    ctx.ledger.add_tool_call(gather.tool, gather.arguments, gather.call_id)
-                    ctx.executed_signatures.add(gather.signature)
-                    ctx.pending_calls = [gather]
-                    return EmitToolCalls([gather])
+                action = self._inject_preference_gather(ctx, dis.inject_preferences)
+                if action is not None:
+                    return action
                 # already fetched (defensive) — fall through to re-plan
                 continue
             if dis.question:

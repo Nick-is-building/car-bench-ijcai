@@ -1,0 +1,25 @@
+# OI-016 Verifikationslauf (Härtung H3): disambiguation_4 Kalibrierung
+# + Hallucination-Regression (0/1/2), je 3 Trials.
+#   - dis_4: Enum-/Choice-Wert (Ambientelicht-Farbe) muss jetzt still aus der
+#     Präferenz (PURPLE) aufgelöst werden — via PRE-PLAN-Gather bei leerem Plan.
+#   - hallucination_0/1/2: Regression — der Gather ist auf set_ambient_lights
+#     gegated und darf hier NICHT feuern; Rewards müssen unverändert bleiben.
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/oi016_verify_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_oi016_verify.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_disambiguation_task_id_filter = ["disambiguation_4"]
+tasks_hallucination_task_id_filter = ["hallucination_0", "hallucination_1", "hallucination_2"]
+seed = 10
+max_steps = 50

@@ -53,6 +53,17 @@ _TOOL_PREF_CATEGORY: dict[str, tuple[str, str]] = {
 }
 
 
+# tool → the single preference-driven value argument. Gates the deterministic
+# PRE-PLAN preference gather (OI-016): kept intentionally minimal so the pre-plan
+# retrieval only fires for tools whose value legitimately comes from a stored
+# preference and where the planner otherwise cannot draft a call at all (e.g. the
+# ambient-light color). Tools resolved by the normal planner-first cascade are NOT
+# listed here — that keeps the blast radius tiny.
+_TOOL_PREF_VALUE_ARG: dict[str, str] = {
+    "set_ambient_lights": "lightcolor",
+}
+
+
 @dataclass
 class PreferenceSlot:
     """Structured preference for one ambiguous slot (LLM extraction output).
@@ -230,7 +241,55 @@ class DisambiguationEngine:
             out_calls.append(self._with_args(call, new_args))
         return PreFlightDisambiguation(calls=out_calls, resolved=resolved)
 
+    def pre_plan_gather(self, ctx: "TurnContext") -> dict | None:  # type: ignore[name-defined]
+        """Deterministic PRE-PLAN preference gather (OI-016).
+
+        The planner emits zero calls when a required state-changing tool needs a
+        value it cannot draft (e.g. set_ambient_lights.lightcolor — the color is
+        neither user-stated nor guessable). Before giving up on the empty plan,
+        check whether a stored preference could supply that value: if so, return
+        get_user_preferences arguments so the next plan round can read it.
+
+        Tightly gated to avoid touching hallucination/base tasks or the normal
+        planner-first cascade:
+          - intent must be state-changing;
+          - a preference gather must not have run this turn and none in ledger;
+          - the required tool must be in _TOOL_PREF_VALUE_ARG AND its value arg
+            must NOT have been user-stated (absent from required_params).
+        """
+        if not ctx.intent or not ctx.intent.get("is_state_changing", False):
+            return None
+        if ctx.ledger.has_tool_result("get_user_preferences"):
+            return None
+        if getattr(ctx, "preferences_gathered", False):
+            return None
+
+        stated = self._user_stated_params(ctx)
+        triggering: list[str] = []
+        for tool in ctx.intent.get("required_tools", []):
+            value_arg = _TOOL_PREF_VALUE_ARG.get(tool)
+            if value_arg is None:
+                continue
+            if (tool, value_arg) in stated:
+                continue
+            triggering.append(tool)
+        if not triggering:
+            return None
+        return self._preference_request_for(triggering)
+
     # --- helpers ---
+
+    def _user_stated_params(self, ctx) -> set[tuple[str, str]]:
+        """(tool, param) pairs the user explicitly supplied (from intent)."""
+        stated: set[tuple[str, str]] = set()
+        for tp in (ctx.intent or {}).get("required_params", []) or []:
+            tool = tp.get("tool") if isinstance(tp, dict) else getattr(tp, "tool", None)
+            params = tp.get("params") if isinstance(tp, dict) else getattr(tp, "params", None)
+            if not tool or not params:
+                continue
+            for p in params:
+                stated.add((tool, p))
+        return stated
 
     def _preference_request_for(self, tools) -> dict | None:
         categories: dict[str, dict[str, bool]] = {}

@@ -307,6 +307,71 @@ class FakeLLM:
         return self.queues[name].pop(0)
 
 
+# ---------------------------------------------------------------------------
+# OI-016 — deterministic PRE-PLAN gather (empty plan → fetch preference first)
+# ---------------------------------------------------------------------------
+
+def _pp_ctx(intent: dict, prefs_in_ledger: bool = False) -> TurnContext:
+    ledger = Ledger()
+    ledger.add_system("You are a car assistant.")
+    ledger.add_user_turn("Change the ambient light color, please.")
+    if prefs_in_ledger:
+        ledger.add_tool_result(
+            "get_user_preferences",
+            json.dumps({"status": "SUCCESS", "result": {
+                "vehicle_settings": {"vehicle_settings": ["prefers PURPLE"]}}}),
+            "call_pref0",
+        )
+    ctx = TurnContext(ledger=ledger, tools=[], model="fake")
+    ctx.intent = intent
+    return ctx
+
+
+class PrePlanGatherTest(unittest.TestCase):
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+
+    def _intent(self, required_params=None):
+        return {
+            "is_state_changing": True,
+            "required_tools": ["set_ambient_lights"],
+            "required_params": required_params or [],
+        }
+
+    def test_fires_for_unstated_preference_value(self):
+        ctx = _pp_ctx(self._intent())
+        out = self.eng.pre_plan_gather(ctx)
+        self.assertEqual(
+            out,
+            {"preference_categories": {"vehicle_settings": {"vehicle_settings": True}}})
+
+    def test_no_fire_when_value_user_stated(self):
+        ctx = _pp_ctx(self._intent(required_params=[
+            {"tool": "set_ambient_lights", "params": ["lightcolor"]}]))
+        self.assertIsNone(self.eng.pre_plan_gather(ctx))
+
+    def test_no_fire_when_prefs_already_in_ledger(self):
+        ctx = _pp_ctx(self._intent(), prefs_in_ledger=True)
+        self.assertIsNone(self.eng.pre_plan_gather(ctx))
+
+    def test_no_fire_when_already_gathered(self):
+        ctx = _pp_ctx(self._intent())
+        ctx.preferences_gathered = True
+        self.assertIsNone(self.eng.pre_plan_gather(ctx))
+
+    def test_no_fire_when_tool_not_in_map(self):
+        ctx = _pp_ctx({"is_state_changing": True,
+                       "required_tools": ["set_climate_temperature"],
+                       "required_params": []})
+        self.assertIsNone(self.eng.pre_plan_gather(ctx))
+
+    def test_no_fire_when_not_state_changing(self):
+        ctx = _pp_ctx({"is_state_changing": False,
+                       "required_tools": ["set_ambient_lights"],
+                       "required_params": []})
+        self.assertIsNone(self.eng.pre_plan_gather(ctx))
+
+
 class GatherWiringTest(unittest.TestCase):
     def test_guard_injects_get_user_preferences(self):
         ledger = Ledger()
@@ -332,6 +397,54 @@ class GatherWiringTest(unittest.TestCase):
 
         self.assertIsInstance(action, EmitToolCalls)
         self.assertEqual([c.tool for c in action.calls], ["get_user_preferences"])
+        self.assertTrue(ctx.preferences_gathered)
+
+    def test_empty_plan_triggers_pre_plan_gather(self):
+        # OI-016: planner emits NO steps because the ambient-light color is
+        # unknown (neither user-stated nor guessable). The state machine must
+        # gather the preference instead of ending the turn with an empty plan.
+        tools = [
+            {"function": {
+                "name": "set_ambient_lights",
+                "description": "Set ambient light color.",
+                "parameters": {"properties": {
+                    "on": {"type": "boolean"},
+                    "lightcolor": {"type": "string",
+                                   "enum": ["RED", "PURPLE", "BLUE"]}},
+                    "required": ["on", "lightcolor"]},
+            }},
+            {"function": {
+                "name": "get_user_preferences",
+                "description": "Retrieve learned user preferences.",
+                "parameters": {"properties": {
+                    "preference_categories": {"type": "object"}},
+                    "required": ["preference_categories"]},
+            }},
+        ]
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Change the ambient light color.")
+        ctx = TurnContext(ledger=ledger, tools=tools, model="fake")
+
+        intent = Intent(
+            user_request_summary="Change ambient light color",
+            required_tools=["set_ambient_lights"],
+            is_state_changing=True, is_ambiguous=False,
+            value_ambiguities=[ValueAmbiguity(
+                tool="set_ambient_lights", argument="lightcolor", user_stated=False)],
+        )
+        empty_plan = Plan(steps=[], done_reason="color unknown")
+        fake = FakeLLM(intents=[intent], plans=[empty_plan])
+
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual([c.tool for c in action.calls], ["get_user_preferences"])
+        self.assertEqual(
+            action.calls[0].arguments,
+            {"preference_categories": {"vehicle_settings": {"vehicle_settings": True}}})
         self.assertTrue(ctx.preferences_gathered)
 
 
