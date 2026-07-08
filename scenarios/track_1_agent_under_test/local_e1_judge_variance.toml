@@ -1,0 +1,22 @@
+# Auftrag E, Phase E1 — Judge-Varianz-Experiment.
+# Drei Base-Tasks, die über 4-5 frühere Läufe durchgehend 3/3 waren (base_0, base_16,
+# base_20), erneut 3x mit identischer Config evaluieren. Reward-Differenz bei gleicher
+# Agent-Trajektorie = reine Judge-/User-Simulator-Varianz (Gemini).
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/e1_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_e1_judge_variance.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_0", "base_16", "base_20"]
+seed = 10
+max_steps = 50

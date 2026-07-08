@@ -1544,3 +1544,37 @@ Rohdaten: `docs/experiments/2026-07-04-lauf4-abnahme.json`
 **→ AUFTRAG B ABGENOMMEN. Pass^3 = 80 % erreicht.**
 
 **claims.md aktualisiert:** policy_aut_errors 0/60 (4 Läufe).
+
+---
+
+## 2026-07-08 — AUFTRAG E, Phase E1: Judge-Varianz-Experiment — Hypothese (VOR dem Lauf committet)
+
+**Kontext-Wechsel:** Der offizielle Kalibrierschuss auf dem Hidden-Set wurde von den
+Organisatoren abgesagt (zu viele Teilnehmer). Auftrag E ist damit das einzige
+Validierungssignal vor der finalen Submission am 19. Juli.
+
+**Ziel E1:** Judge-/User-Simulator-Varianz (Gemini) isoliert von Agent-Varianz belegen.
+Methode: drei Tasks, deren Reward über MEHRERE frühere Läufe durchgehend 3/3 war, erneut
+3× mit identischer Config evaluieren. Jede auftretende Reward-Differenz ist bei nachweislich
+gleicher Agent-Trajektorie reine Judge-/User-Sim-Varianz.
+
+**Task-Auswahl (verifiziert aus 5 Läufen: b6-abnahme, b6-wiederholung, lauf3, lauf4, C8c):**
+- base_0 — 3/3 in allen 5 Läufen
+- base_16 — 3/3 in allen 5 Läufen
+- base_20 — 3/3 in allen 4 Läufen, in denen die Task lief (nicht in C8c)
+
+**Config:** `local_e1_judge_variance.toml`, task_split=train,
+tasks_base_task_id_filter=[base_0,base_16,base_20], num_trials=3, seed=10,
+Agent=claude-sonnet-4-6, Judge/User=gemini-2.5-flash, provider=anthropic. 9 Task-Runs.
+Kostenschätzung $0.76 Mittel / $1.50 Obergrenze — vom User freigegeben.
+
+**Hypothese:**
+- Erwartung Pass^3 = 3/3 pro Task (9/9), da diese Tasks strukturell sauber gelöst werden
+  (deterministische Schichten greifen, kein OI betroffen).
+- Judge-Varianz-Erwartung: gering auf sauberen Base-Tasks; falls überhaupt eine Differenz
+  auftritt (z.B. 8/9), dann als Reward-Rauschen des Gemini-Judge bei identischer Trajektorie.
+- Zusätzlich pro Trial die Tool-Call-Sequenz erfassen: wenn Trajektorien materiell identisch
+  sind, aber Reward variiert → sauber dem Judge/User-Sim zugeschrieben (Paper-Zeile).
+- **Falls-Fall:** variiert der Reward bei IDENTISCHER Trajektorie nicht (9/9, identische
+  Traces), ist das ebenfalls ein starkes Ergebnis — es belegt niedrige Judge-Varianz auf
+  determiniert gelösten Tasks (Obergrenze für Messrauschen).
