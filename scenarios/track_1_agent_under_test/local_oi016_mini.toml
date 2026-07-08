@@ -1,0 +1,21 @@
+# OI-016 Mini-Abnahme (Härtung H3): NUR disambiguation_4 × 3 Trials.
+# Verifiziert, dass die Enum-/Choice-Wert-Mehrdeutigkeit (Ambientelicht-Farbe)
+# jetzt still aus der Präferenz (PURPLE) aufgelöst wird statt Rückfrage.
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/oi016_mini_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_oi016_mini.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_disambiguation_task_id_filter = ["disambiguation_4"]
+seed = 10
+max_steps = 50

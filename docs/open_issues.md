@@ -354,6 +354,43 @@ Kaskade mit Kontext (`get_ambient_light_settings` o. ä.) + Heuristik/Präferenz
 CLARIFY zieht. Abgrenzung zu echter Ziel-Mehrdeutigkeit sauber halten (Null-FP: `user`-Tasks
 dürfen weiter genau einmal fragen).
 
+**TEILFORTSCHRITT + BLOCKER (2026-07-08, Härtung H3, commit fe3d3ae + Mini-Lauf):** ⚠️ NICHT
+geschlossen — Scope-Constraint gezogen, an User übergeben.
+
+Verifizierte Trajektorie (echte 2 Turns, nicht die Instruction): Turn 1 „Could you change the
+ambient lights for me?" ist **echt ziel-mehrdeutig** (an/aus/Farbe) → Rückfrage korrekt. Turn 2
+„I want to change the color." macht die Aktion klar; offen ist nur `lightcolor`, aufzulösen aus
+der Präferenz „user prefers lightcolor on PURPLE for evening drives" → Soll
+`set_ambient_lights(on=True, lightcolor="PURPLE")`.
+
+Zwei nötige Bausteine: (1) Intake darf Turn 2 nicht als `is_ambiguous` klassifizieren; (2) die
+`value_ambiguities`-Kaskade muss `get_user_preferences` gathern und die Farbe still setzen.
+
+Umgesetzt in H3 (committet): `set_ambient_lights` → `_TOOL_PREF_CATEGORY`
+(`vehicle_settings.vehicle_settings`) und Intake-Prompt geschärft (Aktion klar + Enum-Wert offen =
+`value_ambiguity`, nicht `is_ambiguous`). Der Kaskaden-Kern verarbeitet String-/Enum-Werte bereits
+(`resolve_slot`/`_coerce`) — **KEINE zweite Map-Dimension nötig**. 5 Fake-Tests grün.
+
+**Mini-Abnahme-Lauf (nur disambiguation_4, 3 Trials, seed 10, agent sonnet-4-6):** Baustein (1)
+ist **behoben** — Turn 2 läuft jetzt `INTAKE→CAPABILITY_CHECK→PLAN→VERIFY→RESPOND` (nicht mehr
+CLARIFY), in allen 3 Trials reproduzierbar. Baustein (2) greift NICHT: der Agent antwortet
+weiterhin „What color would you like the ambient lights to be?" mit **0 Tool-Calls**; kein
+einziger DisambiguationEngine-Log feuert. Deutung (verify-not-assume, aus State-Trace + fehlenden
+Logs): der Planner emittiert `set_ambient_lights` NICHT (unbekannte Farbe) bzw. Intake füllt
+`value_ambiguities[lightcolor]` nicht — die deterministische Kaskade bekommt nie einen Slot und
+kann daher nie gathern/überschreiben; VERIFY formuliert stattdessen die Rückfrage. Reward
+faktisch 0/3 (keine `set_ambient_lights`-Action). Artefakt nicht persistiert (Launcher-
+Backgrounding beendete den Orchestrator nach dem letzten Turn); Rohbeleg: Agent-Log-State-Traces
+in `_local/runs/oi016_mini_agent.log`.
+
+**Warum hier gestoppt (H3-Scope-Constraint):** Der verbleibende Baustein (2) ist KEIN einzelner
+deterministischer Fix mehr, sondern gekoppeltes LLM-Verhalten über zwei Stufen (Intake muss den
+value_ambiguity zuverlässig flaggen; Planner müsste den Call trotz unbekanntem Wert emittieren,
+damit der Guard gathern+überschreiben kann). Genau das „Calls mit unbekanntem Wert emittieren"
+untergräbt die strukturelle Halluzinations-Sperre an anderer Stelle → Regressionsrisiko im
+hallucination/base-Set, nur mit einem (kostenpflichtigen) Kalibrierlauf absicherbar. Optionen +
+Aufwand an User übergeben (siehe PROGRESS.md), Entscheidung offen.
+
 ---
 
 ## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage ✅ BEHOBEN

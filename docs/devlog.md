@@ -45,6 +45,26 @@ Turn 2 weiterhin als `is_ambiguous` klassifizieren (LLM-Urteil, nicht determinis
 dann greift die Kaskade nicht und der Lauf belegt, dass die Härtung am Intake-Prompt liegt, nicht
 an der Kaskade. **Cost-Gate: Freigabe des Users vor dem Lauf abwarten.**
 
+### Ergebnis Mini-Lauf (2026-07-08, User-Freigabe erteilt) — Hypothese TEILWEISE bestätigt, STOPP
+
+Belege: State-Traces aller 3 Trials in `_local/runs/oi016_mini_agent.log` (Artefakt nicht
+persistiert — der Launcher hatte den Lauf doppelt gebackgroundet [`&` + run_in_background], der
+Orchestrator wurde nach dem letzten Turn beendet, bevor das Ergebnis-JSON geschrieben war).
+
+- **Baustein 1 behoben (Intake-Routing):** Turn 2 „I want to change the color." läuft jetzt in
+  allen 3 Trials `INTAKE→CAPABILITY_CHECK→PLAN→VERIFY→RESPOND` — NICHT mehr CLARIFY. Der
+  Intake-Prompt-Fix wirkt reproduzierbar; die Ziel-vs-Wert-Abgrenzung greift.
+- **Baustein 2 greift NICHT (Kaskade engagiert nicht):** Antwort weiterhin „What color would you
+  like the ambient lights to be?", **0 Tool-Calls**, KEIN DisambiguationEngine-Log. Der Planner
+  emittiert `set_ambient_lights` nicht (unbekannte Farbe) bzw. `value_ambiguities[lightcolor]`
+  bleibt leer → `pre_flight` erhält nie einen Slot → kein Gather, kein Override; VERIFY formuliert
+  die Rückfrage selbst. Reward faktisch 0/3 (keine `set_ambient_lights`-Action).
+
+**STOPP gemäß H3-Scope-Constraint.** Der Rest ist kein Einzelfix mehr, sondern gekoppeltes
+LLM-Verhalten über Intake + Plan mit Regressionsrisiko (Planner müsste Calls mit unbekanntem Wert
+emittieren — untergräbt die Halluzinations-Sperre). Optionen + Aufwand + Entscheidung an User
+übergeben (open_issues OI-016, PROGRESS.md). Kein weiterer autonomer Umbau.
+
 ---
 
 ## 2026-07-08 — Härtung H2: OI-015 numerische Provenance-Prüfung ohne Einheiten-FP (Ergebnis, kein Lauf)

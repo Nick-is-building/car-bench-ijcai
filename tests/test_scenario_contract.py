@@ -83,7 +83,8 @@ class ScenarioContractTest(unittest.TestCase):
                     if path.name not in {"a2a-scenario.toml", "local_smoke_glassbox.toml",
                                          "local_stufe4_abnahme.toml",
                                          "local_stufe5_abnahme.toml",
-                                         "local_stufe6_abnahme.toml"}
+                                         "local_stufe6_abnahme.toml",
+                                         "local_oi016_mini.toml"}
                 }
                 self.assertEqual(files, EXPECTED_SCENARIO_FILES)
 
