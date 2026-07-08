@@ -1,0 +1,22 @@
+# Stufe-6/7-Abnahme-Lauf (Auftrag D): 5 feste Disambiguation-Tasks × 3 Trials.
+# Deckt beide Untertypen ab (Kaskade ADR-0005, Auditor ADR-0006):
+#   disambiguation_0 / _3 / _4  — task_type=disambiguation_internal (NIE fragen, still lösen)
+#   disambiguation_1 / _2       — task_type=disambiguation_user     (genau EINE Rückfrage)
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/stufe6_abnahme_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_stufe6_abnahme.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_1", "disambiguation_2", "disambiguation_3", "disambiguation_4"]
+seed = 10
+max_steps = 50

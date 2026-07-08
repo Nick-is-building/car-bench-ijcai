@@ -4,6 +4,34 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Abnahme-Lauf D: Disambiguierung (Stufe 6/7) — Hypothese (VOR dem Lauf)
+
+**Setup:** Disambiguation-Split **train**, 5 feste Task-IDs × 3 Trials = 15 Task-Runs.
+IDs: `disambiguation_0/3/4` (internal), `disambiguation_1/2` (user) → 3 internal + 2 user.
+Agent `claude-sonnet-4-6`, Judge/User-Sim `gemini-2.5-flash`, seed 10, provider anthropic,
+max_steps 50. Hintergrundlauf (`nohup`), kein tail -f. Kostenrahmen: erwartet ~$6–8,
+Obergrenze ~$15 (User-Freigabe eingeholt).
+
+**Hypothese:** Die Stufe-6-Disambiguierung (ADR-0005) hebt die Disambiguation-Dimension
+von 0 %. Erwartung pro Untertyp:
+- `disambiguation_internal` (0/3/4): der Motor löst still über die Kaskade (Präferenz →
+  Heuristik → Kontext), stellt **keine** Rückfrage. Erfolg = korrekte Auflösung ohne
+  Clarify-Turn.
+- `disambiguation_user` (1/2): bleiben ≥2 gültige Kandidaten, stellt der Motor **genau eine**
+  gezielte Rückfrage (Priorität 5). Erfolg = eine Rückfrage, keine eigenmächtige Wahl.
+
+**Risiken / erwartete Schwachstellen:**
+- Kontext-Kandidaten (Priorität 4) nur best-effort abgeleitet (ADR-0005 Grenze) → ein
+  `internal`-Task könnte auf die Intake-Rückfrage zurückfallen (konservativ, aber Punktverlust).
+- OI-015 (`_value_in_ledger` Wert+Einheit) könnte in der VERIFY/Auditor-Stufe einen korrekten
+  Satz fälschlich durch ein Eingeständnis ersetzen → als möglicher FP im Ergebnis prüfen.
+
+**Auswertung nach dem Lauf:** Pass-Rate gesamt + je Untertyp, Zahl der Rückfragen pro Task
+(internal = 0 erwartet, user = 1), etwaige False-Positive-Eingeständnisse. Ergebnis als
+separater devlog-Eintrag, KEINE Nummer in claims.md ohne Artefakt.
+
+---
+
 ## 2026-07-08 — Auftrag D Phase 3: Stufe 7 schlanker Auditor (Ergebnis)
 
 **Hypothese (VOR Implementierung):** Eine gezielte Selbstprüfung ist an beiden
