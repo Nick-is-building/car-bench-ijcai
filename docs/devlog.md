@@ -1578,3 +1578,48 @@ Kostenschätzung $0.76 Mittel / $1.50 Obergrenze — vom User freigegeben.
 - **Falls-Fall:** variiert der Reward bei IDENTISCHER Trajektorie nicht (9/9, identische
   Traces), ist das ebenfalls ein starkes Ergebnis — es belegt niedrige Judge-Varianz auf
   determiniert gelösten Tasks (Obergrenze für Messrauschen).
+
+---
+
+## 2026-07-08 — AUFTRAG E, Phase E1: Judge-Varianz-Experiment — Ergebnis
+
+**Lauf:** 20260708-222923, `local_e1_judge_variance.toml`, base_0/base_16/base_20 × 3 Trials,
+seed 10, Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash, provider anthropic. 9 Task-Runs.
+Rohdaten: `docs/experiments/2026-07-08-e1-judge-variance.json`. Kosten: siehe run.log
+(unter Schätzung, im $-Cent-Bereich pro Task dank Caching).
+
+**Ergebnis: Pass^1 = Pass^2 = Pass^3 = 100 % (9/9), Reward 1.0 in ALLEN 9 Runs.**
+Alle Reward-Komponenten in allen 9 Runs = 1.0 (r_actions_final, r_actions_intermediate,
+r_tool_execution, r_tool_subset, r_policy, r_user_end_conversation). policy_aut_errors=[],
+policy_llm_errors=[], tool_execution_errors=[] durchgehend.
+
+**Trajektorie-Signaturen (ausgeführte Aktionen pro Trial, verify-not-assume aus reward_info.actions):**
+- base_20: **byte-identisch in allen 3 Trials** → `[get_entries_from_calendar, respond]`.
+- base_0: Kern-Tools identisch (get_sunroof_and_sunshade_position, get_weather, open_close_sunshade,
+  open_close_sunroof), aber Reihenfolge + Anzahl der Zwischen-`respond`/`get_weather` variiert
+  (7 / 10 / 7 Aktionen). Reward trotzdem 1.0/1.0/1.0.
+- base_16: Kern-Tools identisch (get_climate_settings, get_vehicle_window_positions,
+  set_window_defrost, set_fan_speed, set_air_conditioning, open_close_window×N), Reihenfolge variiert
+  (10 / 10 / 7 Aktionen). Reward trotzdem 1.0/1.0/1.0.
+
+**Interpretation (präzise, KEINE Überinterpretation):**
+1. **Es trat KEINE Reward-Differenz auf** — die Briefing-Erwartung „jede Differenz = Judge-Varianz"
+   materialisierte sich nicht, weil der Reward über alle 9 Runs invariant 1.0 war. Das ist selbst ein
+   belastbares Ergebnis, kein Nullresultat.
+2. **base_20 = strikte Judge-Determinismus-Evidenz:** identische Agent-Trajektorie (byte-gleich) →
+   identischer Reward in 3 unabhängigen Sampling-Durchläufen. Auf einer determiniert gelösten Task
+   zeigt der Gemini-Judge/User-Sim 0 Reward-Flips (n=3). Das ist der sauberste isolierte Datenpunkt.
+3. **base_0/base_16 = Scoring-Robustheit:** die Agent-Trajektorie variierte messbar (LLM-Stochastik:
+   andere Aktions-Reihenfolge, zusätzliche Verify/Respond-Schritte), der Reward blieb 1.0. Die
+   Bewertung ist gegen strukturerhaltende Trajektorie-Variation robust.
+4. **Konsequenz für frühere Beobachtungen:** die z.B. in den OI-016-Läufen gesehene Variation
+   (hall_0 2/3) ist damit NICHT automatisch „reine Judge-Varianz" — sie kann echte Agent-Trajektorie-
+   Varianz sein. Judge-Varianz ist auf sauberen Tasks klein/null; Agent-Stochastik ist real vorhanden.
+
+**Grenze der Methode (ehrlich):** Der Harness re-evaluiert die volle Pipeline (Agent+Judge+User-Sim);
+eine echte Judge-Isolation bräuchte fixierte Agent-Ausgabe + nur Judge-Rerun. base_20 liefert diese
+Isolation als natürliches Experiment (Agent-Ausgabe war zufällig identisch). Stärkere Quantifizierung
+der Judge-Varianz erfordert einen Task mit stabilem Agent, der nahe der Bewertungsschwelle liegt —
+solche gab es unter base_0/16/20 nicht (alle klar 1.0). Als Paper-Aussage tragfähig: „Judge-Determinismus
+auf determiniert gelösten Tasks belegt (base_20, 3/3 identisch); Reward robust gegen Agent-Trajektorie-
+Varianz (base_0/16)."
