@@ -4,6 +4,69 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-07 — C9 Docker-Smoke: Ergebnis (Containerfähigkeit BEWIESEN)
+
+**Provider:** anthropic/claude-sonnet-4-6 (AGENT_CLASS=glassbox), Judge/User-Sim=gemini-2.5-flash.
+**Setup:** `scenarios/track_1_agent_under_test/docker-compose.yml` (auto-generiert aus
+`local_docker_smoke.toml`), `--platform linux/amd64`, Docker-Daemon nur via `sudo` erreichbar
+(User nicht in docker-Gruppe, passwortloses sudo vorhanden). Ausführung detached (`up -d`).
+
+**Ergebnis (Lauf 20260707-231841, exit 0, 193 s, n=1/Split, 1 Trial, Pass^1):**
+- Build beider Images (`agent-under-test`, `a2a-client`) fehlerfrei; evaluator-Image von ghcr.io.
+- Alle 3 Container healthy (agent + evaluator + a2a-client), Agent-Server startet sauber
+  („Uvicorn running on 0.0.0.0:9009", „GlassboxAgentExecutor (deterministic shell)").
+- Overall Pass^1 = 33.3 % (1.0/3):
+  - **base_0 ✓ (1.0):** r_policy=1.0, policy_aut_errors=[], policy_llm_errors=[], r_actions_final=1.0
+    — sauberer End-to-End-Durchlauf im Container, keine AUT-Policy-Fehler, keine Infra-Fehler.
+  - **hallucination_0 ✗ (0.0):** end_conversation_keyword=HALLUCINATION_ERROR (Agentenfehler,
+    kein error/traceback). FabricationGuard blockte auf diesem **train**-Task nicht. Anderer Task
+    als in der C8c-Abnahme (dort Hallucination 100 %); nicht vergleichbar, zählt NICHT gegen C.
+    → Härtungskandidat OI-014.
+  - **disambiguation_0 ✗ (0.0):** DISAMBIGUATION_ERROR, r_actions_final=0.0,
+    tool_subset_missing_tools=[open_close_sunroof, open_close_sunshade, get_weather] — erwarteter
+    Stufe-6-Stub-Fail (OI-004), kein neuer Befund.
+
+**Fazit:** Ziel erreicht — der Glassbox-Agent ist containerfähig und liefert im Container valide
+Ergebnisse (base sauber grün). Die zwei Fails sind rein inhaltlich (train-Hallucination bzw.
+Stufe-6-Stub), kein Container-/Infra-Defekt.
+
+**Docker-Stolpersteine:**
+1. **Hintergrund-Start via `nohup sudo docker compose … up &` unzuverlässig:** Client-Prozess
+   wurde getrennt (Log brach mitten im Pull ab, „exit 0" trotz unvollständiger Arbeit); ein
+   Race beim „Recreate" killte den Agent-Container (exit 137, OOMKilled=false). Lösung:
+   detached `up -d` + gezielter Health-Poll + `docker wait` auf a2a-client, statt Foreground-nohup.
+2. **Output-Mount-Rechte (OI-013):** a2a-client (Container-User carbench, uid 1000) scheiterte
+   zuerst mit PermissionError beim Schreiben nach `output/` (Host-Dir gehört Kathi, 775).
+   Behelf: `chmod 777 output/track_1_agent_under_test`. Sauberer Fix offen → OI-013.
+
+**Rohdaten:** `output/track_1_agent_under_test/20260707-231841__…local_docker_smoke…json`
+(gitignored) + Logs unter `_local/runs/c9_docker_*.log`. NICHT committet (siehe Vertex-Notiz unten).
+
+---
+
+## 2026-07-07 — Vertex-Pfad aufgegeben, zurück auf Anthropic direkt
+
+**Befund:** Der Vertex-AI-Umweg (2026-07-06 vorbereitet) ist nicht gangbar. Google-Kontingent-
+Blockade: 48h-Ablehnung für Neukunden-Projekte, Claude auf Vertex in `us-east5` für das
+GCP-Projekt nicht freigeschaltet. Der Vertex-Mini-Smoke (Hypothese vom 2026-07-06) wurde
+daher nie ausgeführt — kein Ergebnis, Pfad verworfen.
+
+**Entscheidung:** Zurück auf **Provider: anthropic** (direkte API, Guthaben vorhanden). Vertex
+wird nicht weiterverfolgt.
+
+**Rückbau:**
+- `.env.vertex` gelöscht; aktive `.env` wieder Kopie von `.env.anthropic`
+  (AGENT_LLM=anthropic/claude-sonnet-4-6). `.env.anthropic` bleibt als Profil erhalten.
+- CLAUDE.md: Provider-Umschaltungs-Block (Vertex/Anthropic, `.env`-Profile, Umschalt-Mechanik)
+  entfernt (lokal, ungetrackt).
+- `llm.py`: provider-aware `_apply_cache_hints()` **behalten** — harmlose defensive Programmierung;
+  bei `anthropic/`-Modellen werden Cache-Hints weiterhin gesetzt (verifiziert: `_is_anthropic`
+  True → kein Early-Return). Retry/Backoff bleibt ebenfalls.
+- open_issues: Es existierte nie eine nummerierte Vertex-OI; der „Docker-Vertex-Auth"-Hinweis
+  stand nur in den lokalen Regeln und ist mit dem Rückbau obsolet. Nichts zu schließen.
+
+---
+
 ## 2026-07-06 — C-Nachtrag: Vertex-Umstellung, Retry/Backoff, Whitelist-Audit, Telemetrie (C8)
 
 **Provider-Feld (ab jetzt Pflicht):** Jeder Lauf protokolliert `Provider: anthropic | vertex_ai`.

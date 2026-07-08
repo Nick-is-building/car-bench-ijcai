@@ -224,3 +224,38 @@ gewählt" in den RESPOND/VERIFY-Prompt injizieren. Gehört wie OI-007 in die
 Härtungsphase nach dem Kalibrierschuss.
 
 **Nächster Schritt:** In der Härtungsphase zusammen mit OI-007 priorisieren.
+
+---
+
+## OI-013 — Docker-Output-Mount: PermissionError beim Schreiben der Ergebnis-JSON
+**Entdeckt:** 2026-07-07 (C9 Docker-Smoke)  **Stufe:** Infrastruktur  **Priorität:** niedrig
+
+Der a2a-client-Container läuft als User `carbench` (uid 1000). Der per Bind-Mount
+eingehängte Host-Ordner `output/` gehört dem Host-User (Kathi, Perms 775) → der Container
+kann die Ergebnis-JSON nicht schreiben (`PermissionError: [Errno 13] … output/…json`).
+Der Eval selbst läuft vollständig durch; nur der finale Write scheitert.
+
+**Behelf (im C9-Lauf verwendet):** `chmod 777 output/track_1_agent_under_test` host-seitig.
+
+**Sauberer Fix (offen):** In `docker-compose.yml` / `generate_compose.py` entweder
+`user: "${UID}:${GID}"` für a2a-client setzen (Container schreibt als Host-User), oder den
+Output-Ordner im Entrypoint mit passenden Rechten anlegen. Betrifft nur lokale Docker-Läufe,
+nicht die eingereichte Container-Fähigkeit.
+
+---
+
+## OI-014 — FabricationGuard blockt train-Task hallucination_0 nicht
+**Entdeckt:** 2026-07-07 (C9 Docker-Smoke, Lauf 20260707-231841)  **Stufe:** 5  **Priorität:** mittel
+
+Im Docker-Smoke (task_split=**train**) endete `hallucination_0` mit
+`end_conversation_keyword=HALLUCINATION_ERROR`, reward=0.0 (kein error/traceback → echter
+Agentenfehler, kein Infra-Problem). Die Stufe-5-Abnahme (C8c) hatte Hallucination 100 %,
+aber auf anderen (Abnahme-)Tasks — dieser train-Task ist neu und nicht vergleichbar.
+
+**Messgüte:** Pass^1, n=1 Task, 1 Trial, Agent=claude-sonnet-4-6, Judge=gemini-2.5-flash —
+statistisch nicht belastbar, einzelner Datenpunkt. Zählt NICHT gegen die C-Abnahme
+(Kriterium war Hallucination-Abnahme-Set, bereits erfüllt).
+
+**Nächster Schritt:** In der Härtungsphase reproduzieren (mehrere Trials auf train-Hallucination-
+Tasks), reward_info/Trajektorie lesen, prüfen ob `FabricationGuard.sanitize()` den konkreten
+Fabrication-Typ strukturell abdeckt oder ob es ein neuer Entzugs-/Erfindungs-Typ ist.
