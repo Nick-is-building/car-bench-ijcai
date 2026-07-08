@@ -203,6 +203,79 @@ class PreFlightTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# OI-016 — enum/choice value ambiguity (ambient light color) runs the cascade
+# ---------------------------------------------------------------------------
+
+class EnumValueAmbiguityTest(unittest.TestCase):
+    """A clear action with an under-specified ENUM value (lightcolor) must flow
+    through the same cascade as a numeric value: preference resolves it silently,
+    the resolved string reaches the call argument verbatim (no numeric coercion),
+    and the gather step targets the right preference category."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+        self.call = PlannedCall(
+            tool="set_ambient_lights",
+            arguments={"on": True, "lightcolor": "RED"},  # planner placeholder
+            call_id="c1",
+        )
+
+    def test_cascade_resolves_enum_from_preference_never_asks(self):
+        res = self.eng.resolve_slot(
+            is_state_changing=True,
+            pref=PreferenceSlot(default="PURPLE"),
+            heuristic_default=None,
+            context_candidates=None,
+            question="What color?",
+        )
+        self.assertEqual(res.status, "resolved")
+        self.assertEqual(res.value, "PURPLE")
+        self.assertEqual(res.priority, "preference")
+
+    def test_enum_string_not_coerced_to_number(self):
+        # _coerce must leave an enum color untouched even with a string sample.
+        self.assertEqual(_coerce("PURPLE", "RED"), "PURPLE")
+        self.assertEqual(_coerce("PURPLE", None), "PURPLE")
+
+    def test_value_flow_override_enum(self):
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_ambient_lights",
+                                               argument="lightcolor")]},
+                   prefs_in_ledger=True)
+        out = self.eng.pre_flight(
+            ctx, [self.call],
+            extractor=lambda c, t, a: PreferenceSlot(default="PURPLE"))
+        self.assertEqual(len(out.calls), 1)
+        self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")
+        self.assertEqual(out.calls[0].arguments["on"], True)  # untouched
+        self.assertEqual(out.resolved,
+                         [("set_ambient_lights", "lightcolor", "PURPLE")])
+
+    def test_gather_targets_vehicle_settings_category(self):
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_ambient_lights",
+                                               argument="lightcolor")]})
+        out = self.eng.pre_flight(ctx, [self.call])
+        self.assertEqual(
+            out.inject_preferences,
+            {"preference_categories": {"vehicle_settings": {"vehicle_settings": True}}})
+        self.assertEqual(out.calls, [])
+
+    def test_ask_when_preference_silent_state_changing(self):
+        # No preference and no context candidate → still asks (Null-FP guard:
+        # we never invent a color).
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_ambient_lights",
+                                               argument="lightcolor")],
+                    "clarification_question": "What color would you like?"},
+                   prefs_in_ledger=True)
+        out = self.eng.pre_flight(
+            ctx, [self.call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.question, "What color would you like?")
+        self.assertEqual(out.calls, [])
+
+
+# ---------------------------------------------------------------------------
 # State-machine wiring — the guard injects get_user_preferences (gather)
 # ---------------------------------------------------------------------------
 

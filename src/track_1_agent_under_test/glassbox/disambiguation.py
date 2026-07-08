@@ -47,6 +47,7 @@ _TOOL_PREF_CATEGORY: dict[str, tuple[str, str]] = {
     "open_close_sunroof": ("vehicle_settings", "vehicle_settings"),
     "open_close_sunshade": ("vehicle_settings", "vehicle_settings"),
     "control_window": ("vehicle_settings", "vehicle_settings"),
+    "set_ambient_lights": ("vehicle_settings", "vehicle_settings"),
     "set_climate_temperature": ("vehicle_settings", "climate_control"),
     "get_routes_from_start_to_destination": ("navigation_and_routing", "route_selection"),
 }

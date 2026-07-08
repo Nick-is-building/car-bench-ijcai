@@ -4,6 +4,49 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H3: OI-016 Enum-/Choice-Wert-Mehrdeutigkeit durch die Kaskade (Hypothese, vor Mini-Lauf)
+
+**Root Cause (verifiziert an der D-Trajektorie, disambiguation_4 trial 0):** Der reale
+Gesprächsverlauf ist zweistufig. Turn 1 „Could you change the ambient lights for me?" ist
+**echt ziel-mehrdeutig** (an/aus/Farbe?) → Rückfrage ist korrekt. Turn 2 „I want to change the
+color." macht die **Aktion klar** (set_ambient_lights, Farbe setzen); offen ist nur noch der
+**`lightcolor`-Wert** — genau ein interner Disambiguierungs-Fall, der aus der gespeicherten
+Präferenz („user prefers lightcolor on PURPLE for evening drives") still aufzulösen wäre
+(Soll-Action `set_ambient_lights(on=True, lightcolor="PURPLE")`). Stattdessen fragt der Agent
+„What color?". Zwei Lücken: (1) `set_ambient_lights` fehlte in `_TOOL_PREF_CATEGORY` → der
+Gather-Schritt injizierte nie `get_user_preferences`, selbst wenn `lightcolor` als
+`value_ambiguity` geflaggt war → Präferenz nie im Ledger → Kaskade fällt auf Priorität 5 (fragen).
+(2) Intake konnte „Farbe ändern" als Ziel-Mehrdeutigkeit (`is_ambiguous`) statt als
+Wert-Unterbestimmtheit klassifizieren → CLARIFY → fragen, ohne die Kaskade je zu erreichen.
+
+**Scope-Entscheidung (kein Score-Tuning, KEINE zweite Dimension nötig):** Die im Briefing
+erwogene zweite Präferenz-Map-Dimension (entity+action Composite-Key) ist für diesen Fall NICHT
+erforderlich — `set_ambient_lights` bildet auf **genau eine** Kategorie
+(`vehicle_settings.vehicle_settings`) ab, und der Kaskaden-Kern verarbeitet String-/Enum-Werte
+bereits (`resolve_slot`/`_coerce` geben Nicht-Zahlen unverändert zurück). Damit fällt der Fall in
+den „ein neuer Fall"-Rahmen; die Härtung ist begrenzt.
+
+**Fix:** (a) `set_ambient_lights` → `("vehicle_settings","vehicle_settings")` in
+`_TOOL_PREF_CATEGORY` (disambiguation.py). (b) Intake-Prompt geschärft: eine klare Aktion mit
+unterbestimmtem ENUM-/Choice-Wert (z. B. „change the ambient light color") ist eine
+`value_ambiguity` auf dem Argument, NICHT `is_ambiguous`; nur eine unklare AKTION bleibt
+ziel-mehrdeutig.
+
+**Fake-Tests (`tests/test_glassbox_disambiguation.py`, +5, gesamt 23 grün):** Kaskade löst
+Enum-Farbe aus Präferenz still auf (nie fragen); `_coerce` lässt Enum-String unangetastet;
+Value-Flow-Override schreibt `lightcolor="PURPLE"` exakt in den Call (`on` unberührt);
+Gather zielt auf `vehicle_settings.vehicle_settings`; ohne Präferenz weiter fragen (Null-FP:
+nie eine Farbe erfinden). Gesamt-Suite: 176 passed / 2 failed (nur vorbestehende OI-010-Infra).
+
+**Hypothese für den Mini-Abnahme-Lauf (nur disambiguation_4, 3 trials, agent sonnet-4-6,
+judge/user gemini-2.5-flash, seed 10, anthropic):** disambiguation_4 löst die Farbe jetzt in ≥1
+Trial still aus der Präferenz auf (PURPLE) statt zu fragen → Reward > 0. Risiko: Intake könnte
+Turn 2 weiterhin als `is_ambiguous` klassifizieren (LLM-Urteil, nicht deterministisch erzwingbar);
+dann greift die Kaskade nicht und der Lauf belegt, dass die Härtung am Intake-Prompt liegt, nicht
+an der Kaskade. **Cost-Gate: Freigabe des Users vor dem Lauf abwarten.**
+
+---
+
 ## 2026-07-08 — Härtung H2: OI-015 numerische Provenance-Prüfung ohne Einheiten-FP (Ergebnis, kein Lauf)
 
 **Kein Eval-Lauf** — reine Code-Härtung, verifiziert durch deterministische Unit-Tests (keine

@@ -62,10 +62,15 @@ that is not present. Leave empty otherwise.
 - is_state_changing: true if fulfilling the request changes vehicle or world state.
 - is_ambiguous: true ONLY for genuine GOAL or TOOL ambiguity — the request could \
 mean two different actions and nothing (preferences, defaults, car state) can decide \
-which. An under-specified ARGUMENT VALUE of an otherwise clear action (e.g. "open the \
-sunroof" without a percentage) is NOT is_ambiguous — flag it in value_ambiguities \
-instead, so it can be resolved deterministically. Do not flag requests as ambiguous \
-when a sensible default reading exists.
+which. An under-specified ARGUMENT VALUE of an otherwise clear action is NOT \
+is_ambiguous — flag it in value_ambiguities instead, so it can be resolved \
+deterministically. This includes an under-specified ENUM/choice value once the action \
+itself is clear: "open the sunroof" (missing percentage) and "change the ambient light \
+color" (action = set the color, but WHICH color is unstated) are both value_ambiguities \
+on that argument, NOT is_ambiguous — the value may be fixed by a stored preference or \
+default. Only when the ACTION itself is unclear (e.g. "do something with the ambient \
+lights" — turn on? off? change color?) is it is_ambiguous. Do not flag requests as \
+ambiguous when a sensible default reading exists.
 - ambiguity_reason / clarification_question: fill only when is_ambiguous=true; \
 clarification_question must be a single natural, speakable question.
 - value_ambiguities: for each state-changing tool this request will call, list any \
