@@ -49,6 +49,38 @@ unverändert gegenüber Baseline (3/3, 3/3). Fix A strippt nur, wenn der Planner
 emittiert — bei Hallucination-Tasks gibt es keinen solchen Call.
 **Cost-Gate: Freigabe erteilt (~$0.54, 9 Läufe). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
 
+### Ergebnis Mini-Rerun (2026-07-08, `20260708-210741`) — Fix B wirkt, Fix A greift, DRITTER Root Cause, STOPP
+
+Rohdaten: `docs/experiments/2026-07-08-oi016-rerun-fixAB.json`. Agent-Traces:
+`_local/runs/oi016_rerun_agent.log`. Agent sonnet-4-6, judge/user gemini-2.5-flash, seed 10.
+Gesamt 6/9 (66.7%). **Hallucination 6/6 (100%)** — Regression sauber, sogar besser als der Vorlauf
+(dort hall_0 2/3). **disambiguation_4 0/3** — weiterhin kein Reward.
+
+**Fix B bestätigt wirksam:** Der Plain-String-Fehler `"Error: … unexpected keyword argument 'color'"`
+wird jetzt vom Retry-Bound erkannt (`Tool-execution retry bound: identical failed call → honest sink`,
+state_machine.py:468). Der Turn endet nach EINEM Fehlversuch mit einer ehrlichen Rückfrage statt bis
+`MAX_PLAN_ROUNDS` zu loopen. Genau das Ziel von B.
+
+**Fix A greift generell:** Der Unknown-Argument-Guard feuerte in den Hallucination-Tasks und strippte
+z.B. `get_weather`s halluziniertes `time_hour_24h format` (state_machine.py:343) — hall blieb 6/6.
+
+**DRITTER, präziser Root Cause (warum dis_4 trotzdem 0/3 bleibt):** Der emittierte Call ist
+`set_ambient_lights(lightcolor="PURPLE", color="PURPLE", on=true)` — `lightcolor` ist **korrekt** (der
+Planner draftet ihn nach dem Gather richtig). Das überzählige `color` stammt **nicht** vom Planner,
+sondern vom **DisambiguationEngine-Value-Flow-Resolver selbst**: der Log zeigt
+`Disambiguation: resolved silently | tool=set_ambient_lights argument="color" value="PURPLE"
+priority=preference` (disambiguation.py:236). Der LLM flaggt den mehrdeutigen Slot mit dem
+Natürlichsprach-Namen `color`; der Resolver schreibt `new_args["color"] = "PURPLE"` (Zeile 234),
+**ohne den Argumentnamen gegen das Tool-Schema zu prüfen**. Diese Injektion passiert bei
+`calls = dis.calls` (state_machine.py:452) — **nach** Fix A (Step-Loop, Zeile 326) und `check_step`
+(Zeile 353). Deshalb sieht Fix A das injizierte `color` nie. Der Planner-eigene Call wäre valide; der
+Resolver korrumpiert ihn mit einem schema-fremden, redundanten Duplikat.
+
+**Bewertung Freigabe-Scope:** Fix A + B (freigegeben) sind erledigt und wirken beide nachweislich. Der
+verbliebene Reward-0-Grund ist ein **neuer, dritter Befund** in einem anderen Modul (Resolver-Namens-
+Injektion), nicht Gegenstand der A+B-Freigabe. **STOPP gemäß H3-Scope-Constraint.** Optionen + Aufwand
+an den User (open_issues OI-016, PROGRESS.md). Kein weiterer autonomer Umbau, kein Lauf ohne Cost-Gate.
+
 ## 2026-07-08 — Härtung H3 (Option A): OI-016 deterministischer PRE-PLAN-Gather (Hypothese, vor Verifikationslauf)
 
 **Ausgangslage (aus dem Mini-Lauf verifiziert, siehe Eintrag unten):** Intake-Routing ist behoben

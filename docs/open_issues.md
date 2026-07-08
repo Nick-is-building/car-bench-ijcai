@@ -425,6 +425,39 @@ Hallucination-Regression (Kontrolle, dieser Lauf): hall_0 2/3, hall_2 3/3 (Basel
 nicht im train-Split. Gather feuerte in KEINEM Hallucination-Kontext → hall_0-Abweichung ist
 LLM/Judge-Varianz, keine Gate-Regression.
 
+**FIX A + B umgesetzt (2026-07-08, commit c395556) + Mini-Rerun (`20260708-210741`):** ⚠️ WEITER
+OFFEN — Fix B wirkt, Fix A greift generell, aber ein **DRITTER Root Cause** verhindert dis_4-Reward.
+STOPP an User. Rohdaten: `docs/experiments/2026-07-08-oi016-rerun-fixAB.json`.
+
+- **Fix A** (Unknown-Argument-Guard, `state_machine._plan_execute_loop` Step-Loop, vor `check_step`):
+  strippt nicht-Schema-Argumente + policy_note + `GuardResult(ArgumentSchema.unknown)`. **Greift
+  generell** — strippte in den hall-Tasks z.B. `get_weather`s `time_hour_24h format` (Log Zeile 343),
+  hall blieb 6/6.
+- **Fix B** (`ledger._is_failure_result` erkennt Plain-String-Fehler `error:`/`exception:`/`traceback (`):
+  **bestätigt wirksam** — der `color`-TypeError wird jetzt vom Retry-Bound erkannt, Turn endet nach
+  EINEM Fehlversuch in der ehrlichen Senke statt bei `MAX_PLAN_ROUNDS` (Log Zeile 468).
+
+**DRITTER Root Cause (warum dis_4 trotz A+B 0/3):** Das überzählige `color` stammt **nicht vom
+Planner** (der draftet `lightcolor="PURPLE"` korrekt), sondern vom **DisambiguationEngine-Value-Flow-
+Resolver selbst**: `disambiguation.py:234` schreibt `new_args["color"]="PURPLE"`, weil der LLM den
+mehrdeutigen Slot mit dem Natürlichsprach-Namen `color` flaggt und `pre_flight` diesen Namen **nicht
+gegen das Tool-Schema prüft**. Die Injektion passiert bei `calls = dis.calls` (`state_machine.py:452`)
+— **nach** Fix A (Zeile 326) und `check_step` (Zeile 353), deshalb sieht Fix A das `color` nie.
+Emittiert wird `set_ambient_lights(lightcolor="PURPLE", color="PURPLE", on=true)` → TypeError.
+
+**Fix-Optionen (Entscheidung offen, an User übergeben — je ein einzelner deterministischer Fix):**
+- **(C1) Resolver schema-aware machen** (Root-Cause-Fix, bevorzugt): in `pre_flight` (disambiguation.py,
+  Zeile ~233) vor `new_args[arg]=…` prüfen, ob `arg` überhaupt ein Schema-Parameter von `call.tool` ist
+  (`matcher.index.has_parameter`); wenn nicht, den Slot NICHT injizieren (loggen). Der Planner-eigene
+  `lightcolor="PURPLE"` bleibt stehen → valider Call. Braucht Zugriff auf den Matcher/Index im Resolver.
+- **(C2) Fix-A-Guard nachverlagern** (fulfills approved-Fix-A-Spec „vor JEDEM Tool-Call"): den Unknown-
+  Argument-Guard zusätzlich/stattdessen auf die FINALEN `calls` unmittelbar vor der Emission (nach
+  `calls = dis.calls`, Zeile 452) laufen lassen. Strippt `color` → `{lightcolor:PURPLE, on:True}` valide.
+  Minimal, nutzt vorhandene Guard-Logik.
+- Empfehlung: **C1** (behebt die Ursache: Resolver soll keine schema-fremden Argnamen erfinden) —
+  C2 als Alternative, falls der Resolver keinen Matcher-Zugriff bekommen soll. Beide ~1 Gate + 2–3
+  Fake-Tests. Verifikation: Mini-Rerun dis_4 (3 Trials) + hall-Regression, Cost-Gate wie gehabt.
+
 ---
 
 ## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage ✅ BEHOBEN
