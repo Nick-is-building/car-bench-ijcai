@@ -4,6 +4,47 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Abnahme-Lauf D: Disambiguierung (Stufe 6/7) — Ergebnis
+
+**Lauf:** `20260708-020751__…local_stufe6_abnahme__train-trials3-dis5ids.json`
+(nach docs/experiments/ kopiert). Kosten **$2.23** (agent $2.22 + user $0.009) — deutlich
+unter der ~$6–8-Schätzung. Wall-Time 1059 s (~17,6 min).
+
+**Unerwartet: nur 9 statt 15 Task-Runs.** Der **train-Split enthält nur 3 Disambiguation-Tasks**
+(`disambiguation_0`, `_2`, `_4`) — die IDs `_1`/`_3` aus der Referenzdatei
+`tasks_disambiguation.py` liegen NICHT im train-Split. Der Filter mit 5 IDs griff daher nur
+3-fach × 3 Trials. Effektive Zusammensetzung: **2 internal (0, 4) + 1 user (2)** — die
+angestrebte „≥2 je Untertyp"-Deckung wurde in train verfehlt (Lernpunkt: Split-Mitgliedschaft
+≠ Referenzdatei-Nummerierung).
+
+**Ergebnis: Disambiguation 0 % → 22,2 % (2/9).** Pass^1 0 %, Pass@3 33,3 %.
+- `disambiguation_0` (internal, Schiebedach): **2/3 ✓**. Kaskade + OI-007-Wetter-Confirmation
+  greifen; die 50 %-Präferenz wird still angewandt und eine korrekte Confirmation gestellt.
+- `disambiguation_4` (internal, Ambientelicht): **0/3**, alle `DISAMBIGUATION_ERROR`. Der Agent
+  **fragt den User** („on, off, or change the color?" / „What color?") statt intern zu lösen.
+- `disambiguation_2` (user, Fenster): **0/3**. Die Rückfrage selbst ist KORREKT
+  („To what percentage should I open the windows?") — Fehlerursache ist `r_tool_execution=0`:
+  16× `OpenCloseWindow_003: Invalid window requested` (ungültiger `window`-Enum-Wert).
+
+**Diagnose (3 Blicke, Debugging-Deckel eingehalten; NICHT gegen die Wertung repariert):**
+1. **Interne Aktions-/Enum-Mehrdeutigkeit wird nicht von der Kaskade abgedeckt** (→ OI-016).
+   Bei `disambiguation_4` ist die Mehrdeutigkeit „welche Aktion / welche Farbe" — Intake flaggt
+   das als Ziel-Mehrdeutigkeit (`is_ambiguous`) → CLARIFY → Rückfrage, statt als
+   `value_ambiguity` in die Priorität-3/4-Auflösung zu laufen. Genau der `internal`-Fall, den
+   Stufe 6 verhindern sollte. ADR-0005-Grenze (Kontext P4 nur best-effort) materialisiert sich.
+2. **Downstream-Tool-Argument-Bug bei control_window** (→ OI-017): nach der (korrekten)
+   Rückfrage ruft der Agent das Fenster-Tool mit ungültigem `window`-Enum. Getrennt von Stufe 6.
+3. **Auditor/Guard-False-Positive**: in `disambiguation_0` wird die Wendung „I'm sorry, I don't
+   have confirmed information about that." in eine an sich valide Confirmation injiziert —
+   passt zum OI-015-Risiko (Wert+Einheit / Präferenzwert nicht als gedeckt erkannt).
+
+**Hypothese: TEILWEISE BESTÄTIGT.** Der Motor hebt die Dimension nachweislich von 0 %
+(Schiebedach-Fall funktioniert inkl. stiller Präferenz-Anwendung). NICHT bestätigt für interne
+Aktions-Mehrdeutigkeit (Ambientelicht) und durch einen separaten Tool-Arg-Bug maskiert
+(Fenster). Nächste Schritte als OI-016/OI-017 dokumentiert — Härtungsphase, kein Score-Tuning.
+
+---
+
 ## 2026-07-08 — Abnahme-Lauf D: Disambiguierung (Stufe 6/7) — Hypothese (VOR dem Lauf)
 
 **Setup:** Disambiguation-Split **train**, 5 feste Task-IDs × 3 Trials = 15 Task-Runs.

@@ -309,3 +309,47 @@ Risiko besteht real erst, wenn das Draft-LLM Einheiten in den `value` schreibt.
 erweitern (Zahlen aus dem Wert ziehen und einzeln gegen den Korpus prüfen), statt reinem
 Substring-Vergleich. Vorher mit echten Trajektorien belegen, dass der FP tatsächlich auftritt —
 sonst Null-FP-Disziplin nicht durch eine Spekulativ-Änderung aufweichen.
+
+**Beleg (2026-07-08, Abnahme-Lauf D):** In `disambiguation_0` erscheint „I'm sorry, I don't have
+confirmed information about that." mitten in einer an sich validen Confirmation — der FP tritt
+real auf (vermutlich der 50 %-Präferenzwert). Trotzdem passt der Task 2/3; der FP kostet nicht
+zwingend den Reward, ist aber unschön. Token-Extraktion in der Härtung priorisieren.
+
+---
+
+## OI-016 — Interne Aktions-/Enum-Mehrdeutigkeit läuft nicht durch die Kaskade
+**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_4`)  **Stufe:** 6  **Priorität:** hoch
+
+`disambiguation_4` (task_type=`disambiguation_internal`, Ambientelicht) scheitert **3/3** mit
+`DISAMBIGUATION_ERROR`: der Agent **fragt den User** („Would you like to turn the ambient lights
+on, off, or change the color?" / „What color?") statt intern zu lösen. Die Mehrdeutigkeit ist
+hier „welche Aktion / welche Farbe" — Intake flaggt sie als **Ziel-Mehrdeutigkeit**
+(`is_ambiguous`) → State-Machine geht nach CLARIFY → Rückfrage. Sie erreicht damit NIE die
+`value_ambiguities`-Kaskade (Priorität 2/3/4), die `internal` still auflösen soll. Genau der
+Fall, den Stufe 6 (ADR-0005) verhindern sollte; die dort benannte Grenze „Kontext-Kandidaten
+P4 nur best-effort" materialisiert sich.
+
+**Nächster Schritt (Härtung, KEIN Score-Tuning):** Prüfen, ob Aktions-/Enum-Unterbestimmtheit
+(nicht nur numerische Argumentwerte) als `ValueAmbiguity` klassifiziert werden soll, sodass die
+Kaskade mit Kontext (`get_ambient_light_settings` o. ä.) + Heuristik/Präferenz greift, bevor
+CLARIFY zieht. Abgrenzung zu echter Ziel-Mehrdeutigkeit sauber halten (Null-FP: `user`-Tasks
+dürfen weiter genau einmal fragen).
+
+---
+
+## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage
+**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_2`)  **Stufe:** Execution  **Priorität:** hoch
+
+`disambiguation_2` (task_type=`disambiguation_user`, Fenster) scheitert **3/3** — aber NICHT an
+der Disambiguierung: die Rückfrage „To what percentage should I open the windows?" ist korrekt
+(ein Trial hat sogar `r_user_end_conversation=1`). Der Reward fällt durch `r_tool_execution=0`:
+**16× `OpenCloseWindow_003: Invalid window requested - Choose one of ALL, DRIVER, PASSENGER,
+DRIVER_REAR, PASSENGER_REAR, RIGHT_REAR, LEFT_REAR.`** Der Agent übergibt dem Fenster-Tool nach
+der Rückfrage einen ungültigen `window`-Enum (vermutlich verwechselt er Prozentwert und
+Fenster-Selektor oder rät den Enum). 16 Wiederholungen deuten zudem auf eine Retry-Schleife
+ohne Abbruch bei wiederholtem Tool-Fehler hin.
+
+**Nächster Schritt (Härtung):** (a) `window`-Argument gegen die erlaubte Enum-Liste des
+Tool-Schemas validieren (Pre-Flight, analog zu Numerik-Provenienz), (b) bei wiederholtem
+identischem Tool-Fehler nicht endlos retryen, sondern ehrlich abbrechen/rückfragen. Reproduzieren
+und Trajektorie lesen, bevor eine feste Zuordnung „Prozent→control_sunroof/window" gebaut wird.
