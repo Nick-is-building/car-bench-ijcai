@@ -336,8 +336,23 @@ mit gefaktem Claim-Extraktor. Bestehende `test_glassbox_auditor.py` (Regression 
 
 ---
 
-## OI-016 — Interne Aktions-/Enum-Mehrdeutigkeit läuft nicht durch die Kaskade
-**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_4`)  **Stufe:** 6  **Priorität:** hoch
+## OI-016 — Interne Aktions-/Enum-Mehrdeutigkeit läuft nicht durch die Kaskade ✅ BEHOBEN
+**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_4`)  **Behoben:** 2026-07-08 (Härtung H3, Option A + Fix A/B + C1)  **Stufe:** 6  **Priorität:** hoch
+
+**GESCHLOSSEN (2026-07-08, commit 0d02ecb, Lauf `20260708-212913`):** disambiguation_4 **3/3**,
+Hallucination-Regression **6/6** — gesamt 9/9. Drei deterministische Root-Cause-Fixes zusammen: (1)
+**Option A** PRE-PLAN-Gather (`pre_plan_gather`, commit 5e48541) holt bei leerem Plan die Präferenz,
+damit die nächste Plan-Runde den unterbestimmten Enum-Wert draften kann; (2) **Fix B**
+(`ledger._is_failure_result`, commit c395556) erkennt Plain-String-Tool-Fehler → Retry-Bound greift,
+kein `MAX_PLAN_ROUNDS`-Loop; (3) **C1** schema-aware Value-Flow-Resolver (`disambiguation.pre_flight`,
+commit 0d02ecb) injiziert keinen Slot unter einem schema-fremden Namen mehr — der emittierte Call ist
+sauber `set_ambient_lights(lightcolor="PURPLE", on=true)`. **Fix A** (Unknown-Argument-Guard im
+Step-Loop, commit c395556) bleibt als generelle Absicherung aktiv. Kein Score-Tuning, alles
+deterministisch. Details unten (chronologische Härtungs-Historie).
+
+---
+
+### Härtungs-Historie OI-016 (chronologisch, bis zum Abschluss)
 
 `disambiguation_4` (task_type=`disambiguation_internal`, Ambientelicht) scheitert **3/3** mit
 `DISAMBIGUATION_ERROR`: der Agent **fragt den User** („Would you like to turn the ambient lights

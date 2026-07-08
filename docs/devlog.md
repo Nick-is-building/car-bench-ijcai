@@ -40,6 +40,26 @@ Hallucination-Tasks flaggt der Resolver keine set_ambient_lights-Slots → Rewar
 6/6** (darf nicht darunter fallen).
 **Cost-Gate: Freigabe erteilt (~$0.54, 9 Läufe). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
 
+### Ergebnis Mini-Rerun (2026-07-08, `20260708-212913`) — C1 wirkt, OI-016 GESCHLOSSEN ✅
+
+Rohdaten: `docs/experiments/2026-07-08-oi016-c1-verify.json`. Agent sonnet-4-6, judge/user
+gemini-2.5-flash, seed 10. **Gesamt 9/9 (100%). disambiguation_4 3/3 ✅, Hallucination 6/6 ✅.**
+
+Hypothese bestätigt: der emittierte Call ist jetzt sauber `set_ambient_lights(lightcolor="PURPLE",
+on=true)` — **kein `color`-Duplikat mehr**. Der Resolver überspringt den vom LLM unter dem
+Natürlichsprach-Namen `color` geflaggten Slot (nicht im Schema), der planner-eigene, schema-korrekte
+`lightcolor="PURPLE"` bleibt stehen → valider Call, kein TypeError, kein Loop, Reward 3/3. Die
+Hallucination-Regression bleibt bei 6/6 — C1 verändert nur die Slot-Injektion und feuert in keinem
+Hallucination-Kontext.
+
+**Alle drei OI-016-Root-Causes behoben:** (1) leerer Plan bei unterbestimmtem Präferenz-Wert →
+PRE-PLAN-Gather (Option A); (2) Loop bei Plain-String-Tool-Fehler → Fix B (Retry-Bound erkennt
+`Error:`); (3) schema-fremdes Argument aus dem Value-Flow-Resolver → C1 (schema-aware Injektion).
+Fix A (Unknown-Argument-Guard) bleibt als generelle Absicherung gegen planner-seitige Nicht-Schema-
+Argumente aktiv (belegt am `get_weather`-Strip). **OI-016 geschlossen.** Kein Score-Tuning — alle
+Fixes sind deterministisch und generisch. STOPP gemäß Gate; Auftrag E (Messphase) NICHT eigenmächtig
+begonnen.
+
 ## 2026-07-08 — Härtung H3 (Fix A+B): OI-016 Unknown-Argument-Guard + Fehlerformat-Normalisierung (Hypothese, vor Mini-Rerun)
 
 **Ausgangslage (aus dem Verifikationslauf, Eintrag unten):** Option A wirkt — der PRE-PLAN-Gather
