@@ -337,8 +337,28 @@ dürfen weiter genau einmal fragen).
 
 ---
 
-## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage
-**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_2`)  **Stufe:** Execution  **Priorität:** hoch
+## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage ✅ BEHOBEN
+**Entdeckt:** 2026-07-08 (Abnahme-Lauf D, `disambiguation_2`)  **Behoben:** 2026-07-08 (Härtung H1)  **Stufe:** Execution  **Priorität:** hoch
+
+**Root Cause (verifiziert):** Wert-Mapping-Fehler — der Planner sendet den `window`-Selektor als
+natürlichsprachliche Phrase `"all windows"` statt des Schema-Enum-Tokens `ALL` (`percentage=50`
+korrekt/user-bestätigt). Die 16 identischen Retries = `MAX_PLAN_ROUNDS`/Gesprächsende: es gab nie
+einen Retry-Bound für Tool-Execution-Fehler (nur für Capability-Refusals und Provenance), und der
+pro User-Turn frisch erzeugte TurnContext setzt die turn-interne Idempotenz zurück.
+
+**Behoben durch (Lesson 1a):** (a) Deterministische Enum-Validierung Pre-Flight gegen das
+Tool-Schema (`CapabilityIndex.enum_values` + Gate in `state_machine._plan_execute_loop`):
+ungültiger Wert → Note mit erlaubten Werten + Re-Plan (`enum_rebuttals<2`), danach ehrliche Senke
+(`_respond_invalid_argument`); Invalid-Call wird nie emittiert. (b) Turn-übergreifender
+Retry-Bound: `Ledger.failed_call_signatures()` (persistiert, im Gegensatz zum TurnContext) — ein
+(tool, args)-Call mit vorherigem `status="FAILURE"` wird nicht identisch erneut emittiert →
+`_respond_tool_error`. Tests: `tests/test_glassbox_oi017.py` (9 grün) inkl. Null-FP (gültiger
+Enum → PASS) und „nicht 16 Retries".
+
+---
+
+### OI-017 (Original-Beschreibung, historisch)
+**Stufe:** Execution  **Priorität:** hoch
 
 `disambiguation_2` (task_type=`disambiguation_user`, Fenster) scheitert **3/3** — aber NICHT an
 der Disambiguierung: die Rückfrage „To what percentage should I open the windows?" ist korrekt

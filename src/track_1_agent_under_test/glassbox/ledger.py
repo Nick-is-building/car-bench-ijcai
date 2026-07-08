@@ -88,6 +88,30 @@ class Ledger:
             if e.kind == "tool_call" and e.turn == self._turn
         ]
 
+    def failed_call_signatures(self) -> set[str]:
+        """Signatures of calls whose result reported a runtime failure.
+
+        Format matches ``PlannedCall.signature`` (``tool:json(args)``) so the
+        state machine can refuse to re-emit an identical call the evaluator
+        already rejected (OI-017 retry bound). This survives the fresh
+        TurnContext each user turn creates, because the ledger persists per
+        context while executed_signatures does not.
+        """
+        import json as _json
+
+        calls_by_id: dict[str, LedgerEntry] = {
+            e.tool_call_id: e for e in self._entries
+            if e.kind == "tool_call" and e.tool_call_id is not None
+        }
+        sigs: set[str] = set()
+        for e in self._entries:
+            if e.kind != "tool_result" or not _is_failure_result(e.content):
+                continue
+            call = calls_by_id.get(e.tool_call_id)
+            if call is not None:
+                sigs.add(f"{call.tool_name}:{_json.dumps(call.content, sort_keys=True)}")
+        return sigs
+
     def get_state_changing_tools_called(self) -> set[str]:
         """Returns all tool names that were called (state-changing or not)."""
         return {
@@ -137,6 +161,29 @@ class Ledger:
 
     def _append(self, entry: LedgerEntry) -> None:
         self._entries.append(entry)
+
+
+def _is_failure_result(content: Any) -> bool:
+    """True if a tool result reports a runtime failure (evaluator contract).
+
+    The car-bench tools return a JSON string like ``{"status": "FAILURE",
+    "errors": {...}}`` on rejection; a plain-string result never counts.
+    """
+    import json as _json
+
+    text = content if isinstance(content, str) else None
+    if text is None:
+        return False
+    try:
+        data = _json.loads(text)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    status = data.get("status")
+    if isinstance(status, str) and status.upper() == "FAILURE":
+        return True
+    return bool(data.get("errors"))
 
 
 def _now() -> datetime:

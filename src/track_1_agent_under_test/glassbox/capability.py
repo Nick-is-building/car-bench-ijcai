@@ -68,6 +68,21 @@ class CapabilityIndex:
         cap = self._caps.get(tool_name)
         return cap is not None and param_name in cap.parameters
 
+    def enum_values(self, tool_name: str, param_name: str) -> list | None:
+        """Allowed enum values for a parameter, or None if the schema defines none.
+
+        Used for deterministic argument validation (OI-017, Lesson 1a): the LLM
+        proposes a value, code checks it against the schema's `enum` list.
+        """
+        cap = self._caps.get(tool_name)
+        if cap is None:
+            return None
+        spec = cap.parameters.get(param_name)
+        if not isinstance(spec, dict):
+            return None
+        enum = spec.get("enum")
+        return enum if isinstance(enum, list) else None
+
     def get_tool(self, tool_name: str) -> ToolCapability | None:
         return self._caps.get(tool_name)
 

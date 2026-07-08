@@ -4,6 +4,48 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H1: OI-017 Tool-Arg-Enum-Validierung + Retry-Bound (Ergebnis, kein Lauf)
+
+**Kein Eval-Lauf** — reine Code-Härtung gegen einen im Abnahme-Lauf D belegten Fehler,
+verifiziert durch deterministische Unit-Tests (keine API-Kosten).
+
+**Root Cause (aus `docs/experiments/20260708-020751…dis5ids.json`, disambiguation_2, trial 0):**
+Der Planner sendet nach der (korrekten) Rückfrage 16× identisch
+`open_close_window(percentage=50, window="all windows")`. `percentage=50` ist korrekt und
+user-bestätigt; der Fehler ist ein **Wert-Mapping-Fehler** im `window`-Selektor: das LLM nutzt
+die natürlichsprachliche Phrase `"all windows"` statt des Schema-Enum-Tokens `ALL`
+(erlaubt: ALL/DRIVER/PASSENGER/DRIVER_REAR/PASSENGER_REAR/RIGHT_REAR/LEFT_REAR). Keine
+Zufalls-Halluzination — die Semantik stimmt, nur die Token-Form nicht.
+
+**Warum kein Bound griff (Codepfad):** Die bestehenden Re-Plan-Bounds gelten nur für
+Capability-Refusals (`capability_rebuttals<2`, plan.py) und Provenance-Unsicherheit
+(`provenance_rebuttals<2`, state_machine.py). Für **Tool-Execution-Fehler gab es nie einen
+Bound**. Zusätzlich erzeugt `glassbox_agent.execute()` pro User-Turn einen **frischen
+TurnContext** → `executed_signatures`/`plan_round` werden zurückgesetzt, die turn-interne
+Idempotenz greift also nicht über Turn-Grenzen. Einziger Stopp war `MAX_PLAN_ROUNDS`/Gesprächsende.
+
+**Fix (Lesson 1a — LLM schlägt vor, Code entscheidet):**
+- (a) **Enum-Validierung Pre-Flight** (`capability.py CapabilityIndex.enum_values`,
+  `state_machine.py`): jeder Argumentwert wird gegen die `enum`-Liste des Tool-Schemas geprüft,
+  BEVOR der Call emittiert wird. Ungültig → Note mit den erlaubten Werten + Re-Plan, gebunden auf
+  `enum_rebuttals<2`; danach ehrliche Senke (`_respond_invalid_argument`) — nie ein emittierter
+  Invalid-Call.
+- (b) **Turn-übergreifender Retry-Bound** (`ledger.py failed_call_signatures`, `state_machine.py`):
+  ein (tool, args)-Call, der in diesem Gespräch schon ein `status="FAILURE"` erhielt, wird nicht
+  identisch erneut emittiert → ehrliche Senke (`_respond_tool_error`). Der Ledger persistiert über
+  Turn-Grenzen (im Gegensatz zum TurnContext) und ist die Autorität.
+
+**Tests (`tests/test_glassbox_oi017.py`, 9 grün):** ungültiger Enum → gebundener Re-Plan (genau 2)
+→ ehrliche Senke, `plan_round` << 16, Invalid-Call nie emittiert; **gültiger Enum → PASS
+(Null-FP)**; identischer Failed-Call im Ledger → nicht erneut emittiert; Unit-Tests für
+`enum_values` und `failed_call_signatures`. Zusätzlich `local_stufe6_abnahme.toml` ins
+Exclusion-Set von `test_scenario_contract.py` nachgetragen (Auftrag-D-Leftover). Gesamt-Suite:
+157 passed, 2 failed (nur vorbestehende OI-010-Infra, `test_a2a_response_contract.py`).
+
+**OI-017 geschlossen.**
+
+---
+
 ## 2026-07-08 — Abnahme-Lauf D: Disambiguierung (Stufe 6/7) — Ergebnis
 
 **Lauf:** `20260708-020751__…local_stufe6_abnahme__train-trials3-dis5ids.json`

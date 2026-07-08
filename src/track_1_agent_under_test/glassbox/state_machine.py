@@ -127,6 +127,8 @@ class TurnContext:
     layer_decisions: list = field(default_factory=list)
     # C2/C3/C4: provenance re-plan attempts before escalating to honesty sink
     provenance_rebuttals: int = 0
+    # OI-017: enum-validation re-plan attempts before escalating to honesty sink
+    enum_rebuttals: int = 0
     # Stufe 6: get_user_preferences already injected this turn (gather-once guard)
     preferences_gathered: bool = False
     # Stufe 6: silently resolved (tool, arg, value) tuples — telemetry
@@ -393,6 +395,68 @@ class StateMachine:
                 ))
             calls = dis.calls
 
+            # OI-017 (b): cross-turn tool-execution-error bound. A (tool, args)
+            # call that already returned a FAILURE earlier in this conversation
+            # is never re-emitted identically — each user turn starts a fresh
+            # TurnContext, so executed_signatures alone cannot stop a repeat
+            # across turns; the ledger persists and is authoritative.
+            failed_sigs = ctx.ledger.failed_call_signatures()
+            if failed_sigs:
+                repeats = [c for c in calls if c.signature in failed_sigs]
+                if repeats:
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="BLOCK", layer="ToolExecution.retry_bound",
+                        reason=f"{len(repeats)} call(s) already failed — not retrying "
+                               f"identically: {[c.tool for c in repeats]}",
+                    ))
+                    _log.warning(
+                        "Tool-execution retry bound: identical failed call → honest sink",
+                        tools=[c.tool for c in repeats],
+                    )
+                    return self._respond_tool_error(ctx)
+
+            # OI-017 (a): deterministic enum validation against the tool schema.
+            # The LLM proposes argument values; code checks each against the
+            # schema's allowed `enum` (Lesson 1a). An invalid value (e.g.
+            # "all windows" instead of "ALL") triggers a bounded corrective
+            # re-plan, never an emitted call.
+            enum_violations = [
+                (call.tool, arg_name, arg_val, allowed)
+                for call in calls
+                for arg_name, arg_val in call.arguments.items()
+                if (allowed := matcher.index.enum_values(call.tool, arg_name)) is not None
+                and arg_val not in allowed
+            ]
+            if enum_violations:
+                brief = [(t, a, v) for t, a, v, _ in enum_violations]
+                if ctx.enum_rebuttals < 2:
+                    ctx.enum_rebuttals += 1
+                    for tool, arg_name, arg_val, allowed in enum_violations:
+                        ctx.policy_notes.append(
+                            f"INVALID-ARGUMENT: {tool}.{arg_name}={arg_val!r} is not "
+                            f"an allowed value. Choose exactly one of: "
+                            f"{', '.join(map(str, allowed))}. Use the exact schema "
+                            f"token, not a natural-language phrase."
+                        )
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="UNCERTAIN", layer="ArgumentSchema.enum",
+                        reason=f"invalid enum value(s) → re-plan: {brief}",
+                    ))
+                    _log.info(
+                        "Enum validation: invalid value → re-plan",
+                        violations=brief, rebuttal=ctx.enum_rebuttals,
+                    )
+                    continue
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="ArgumentSchema.enum",
+                    reason=f"invalid enum value(s) after 2 re-plans: {brief}",
+                ))
+                _log.warning(
+                    "Enum validation: rebuttals exhausted → honest sink",
+                    violations=brief,
+                )
+                return self._respond_invalid_argument(ctx, enum_violations)
+
             # Stufe 5 (C2/C3/C4): argument provenance check before emitting calls.
             # State-changing calls with numeric args must have ledger-verified bindings.
             fg = FabricationGuard()
@@ -486,6 +550,29 @@ class StateMachine:
         text = (
             "I'm not certain which value you'd like me to use for that. "
             "Could you confirm the exact setting you have in mind?"
+        )
+        return self._finish(ctx, text)
+
+    def _respond_invalid_argument(self, ctx: TurnContext, violations: list) -> Action:
+        """OI-017 (a): the planner could not map a value to a valid schema enum
+        even after two corrective re-plans — stop, don't emit a call the tool
+        would reject, and ask the user for the exact setting (honest sink)."""
+        ctx.transition(State.RESPOND)
+        args = ", ".join(dict.fromkeys(a for _, a, _, _ in violations))
+        text = (
+            "I'm sorry — I couldn't complete that because I wasn't able to map "
+            f"your request to a valid option for: {args}. "
+            "Could you tell me exactly which setting you'd like?"
+        )
+        return self._finish(ctx, text)
+
+    def _respond_tool_error(self, ctx: TurnContext) -> Action:
+        """OI-017 (b): an identical call already failed in this conversation —
+        stop retrying and be honest instead of looping."""
+        ctx.transition(State.RESPOND)
+        text = (
+            "I'm sorry — that action keeps failing when I try it, so I've "
+            "stopped retrying. Could you clarify exactly what you'd like me to do?"
         )
         return self._finish(ctx, text)
 
