@@ -5,13 +5,29 @@ Stufe 5 adds the FabricationGuard claim-check on top of this draft.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import llm
 from . import common
 
 
+class ClaimCheck(BaseModel):
+    """One factual claim in the reply plus its ledger source (Stufe-7 self-check)."""
+    value: str = Field(description="The specific asserted value (e.g. '42 minutes', '22')")
+    sentence: str = Field(description="The full sentence in the reply that states it")
+    source: str = Field(
+        default="",
+        description="Verbatim quote from a tool result or user message that backs this "
+                    "value. Use 'inferred' if it follows from context, or leave empty if "
+                    "there is no ledger source (then do NOT state the claim).",
+    )
+
+
 class Draft(BaseModel):
+    # Forced self-check FIRST (Stufe 7): the model enumerates its factual claims with
+    # their ledger sources before writing the reply. Parsed deterministically by the
+    # Auditor — no separate audit LLM call. Empty for pure confirmations.
+    claims: list[ClaimCheck] = Field(default_factory=list)
     response: str
 
 
@@ -24,8 +40,12 @@ You produce spoken text to be delivered to the driver.
 You receive the full conversation including tool calls and results.
 
 # Task
-Write a concise spoken reply to the last user message, \
-based strictly on facts present in the conversation and tool results.
+First run a self-check: in `claims`, list every specific factual value your reply \
+will assert (numbers, times, distances, temperatures, states, availability) together \
+with the verbatim ledger source (a quote from a tool result or user message) that \
+backs it. If a value has NO ledger source, do not state it in the reply at all. \
+Then write a concise spoken reply in `response`, based strictly on facts present in \
+the conversation and tool results.
 
 # Format
 - 1-2 short sentences for confirmations; only as long as needed otherwise.
@@ -44,8 +64,8 @@ has already happened.
 """
 
 
-def draft_response(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
-    """Draft the turn's response from the ledger (LLM, temp 0)."""
+def draft_response(ctx: "TurnContext") -> "Draft":  # type: ignore[name-defined]
+    """Draft the turn's reply plus its self-check claims from the ledger (LLM, temp 0)."""
     system = (
         _DRAFT_SYSTEM
         + "\n" + common.SEMANTIC_POLICY_OBLIGATIONS
@@ -57,12 +77,11 @@ def draft_response(ctx: "TurnContext") -> str:  # type: ignore[name-defined]
         "content": (
             f"# Conversation (tool calls/results included)\n{transcript}"
             f"{common.render_policy_notes(ctx.policy_notes)}\n\n"
-            "Write the assistant's spoken reply to the last user message, "
-            "based strictly on the facts above."
+            "Self-check your factual claims in `claims`, then write the assistant's "
+            "spoken reply to the last user message, based strictly on the facts above."
         ),
     }]
-    draft = llm.call_structured(messages, Draft, model=ctx.model, system=system)
-    return draft.response
+    return llm.call_structured(messages, Draft, model=ctx.model, system=system)
 
 
 try:

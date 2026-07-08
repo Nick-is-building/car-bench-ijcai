@@ -1,57 +1,87 @@
 """
-Auditor — Stufe 7.
+Auditor — Stufe 7 (bewusst schlank, siehe ADR-0006).
 
-Gezielte Selbstpruefung an genau zwei Stellen:
-  1. Vor zustandsaendernden Tool-Calls: passt der Plan zu Ledger und Policies?
-  2. Vor der finalen Antwort: enthaelt sie eine Behauptung ohne Ledger-Deckung?
+Gezielte Selbstpruefung an zwei Stellen:
+  1. VOR zustandsaendernden Tool-Calls: bereits realisiert durch Stufe 4
+     (PolicyChecker Pre-Flight) + Stufe 5 (FabricationGuard.check_tool_arguments),
+     die in jeder PLAN-Runde vor EXECUTE laufen. KEIN eigener Auditor-Code noetig.
+  2. VOR der finalen Antwort: `pre_response_check`. Das RESPOND-/VERIFY-Prompt
+     erzwingt eine Selbstpruefung (jede faktische Behauptung mit Ledger-Quelle,
+     DANN die Antwort). Der Auditor parst diese Selbstpruefung DETERMINISTISCH —
+     KEIN zusaetzlicher LLM-Aufruf.
 
-Nie bei jedem Turn (Kosten/Varianz). Bei Zweifel konservativer Default: nachfragen
-oder ablehnen statt handeln — der Benchmark belohnt ehrliches Zoegern.
+Bei Zweifel konservativer Default: die ungedeckte Behauptung wird durch ein ehrliches
+Eingestaendnis ersetzt (handeln/behaupten nur mit Deckung).
 
-Compliance: prueft nur gegen Wahrheit, Ledger und 19 Policies — nie gegen
-nachgebildete Evaluator-Subscores, kein iteratives Reparieren gegen Wertung.
+Compliance: prueft nur gegen Wahrheit + Ledger — nie gegen nachgebildete
+Evaluator-Subscores, kein iteratives Reparieren gegen die Wertung.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+
+from loguru import logger as _log
 
 from .ledger import Ledger
+from .guard import _ledger_text_corpus, _value_in_ledger
+
+
+_HONEST_ADMISSION = "I'm sorry, I don't have confirmed information about that."
 
 
 @dataclass
 class AuditResult:
     passed: bool
-    issues: list[str]
-    conservative_action: str  # what to do if failed: "ask" | "refuse" | "re-lookup"
+    issues: list[str] = field(default_factory=list)
+    conservative_action: str = ""     # "admit" when a claim was replaced, else ""
+    safe_text: str = ""               # response with unsupported claims replaced
 
 
 class Auditor:
-    """
-    Two-point self-check: pre-action and pre-response.
+    """Deterministic pre-response self-check (no LLM call of its own)."""
 
-    Stufe 7 implementation point.
-    """
+    def pre_response_check(self, draft: "Draft", ledger: Ledger) -> AuditResult:  # type: ignore[name-defined]
+        """Verify each self-declared factual claim against the ledger.
 
-    def pre_action_check(
-        self, plan: list[dict], ledger: Ledger
-    ) -> AuditResult:
+        A numeric claim whose value has no ledger provenance (or whose declared
+        source quote is not in the ledger) is unsupported → its sentence is
+        replaced by an honest admission. String-only claims are left untouched
+        (they may be valid paraphrases of tool results — Null-FP discipline).
         """
-        Verify the plan is consistent with ledger state and all 19 policies
-        before any state-changing tool call is sent.
+        corpus = _ledger_text_corpus(ledger)
+        safe = draft.response
+        issues: list[str] = []
 
-        Semantic check the deterministic PolicyChecker might miss.
-        Conservative default on failure: refuse or ask.
-        """
-        raise NotImplementedError("Auditor.pre_action_check — implement in Stufe 7")
+        for claim in draft.claims:
+            # Only numeric claims are deterministically falsifiable here.
+            if not re.search(r"\d", claim.value):
+                continue
+            value_ok = _value_in_ledger(claim.value, corpus)
+            src = claim.source.strip().lower()
+            source_declared = src not in ("", "inferred", "context", "none")
+            source_ok = (not source_declared) or claim.source.strip() in corpus
+            if value_ok and source_ok:
+                continue
+            issues.append(
+                f"{claim.value!r} unsupported"
+                + ("" if value_ok else " (value not in ledger)")
+                + ("" if source_ok else " (declared source not in ledger)")
+            )
+            if claim.sentence and claim.sentence in safe:
+                safe = safe.replace(claim.sentence, _HONEST_ADMISSION).strip()
 
-    def pre_response_check(
-        self, response_draft: str, ledger: Ledger
-    ) -> AuditResult:
-        """
-        Verify the response draft contains no claims without ledger backing.
+        if issues:
+            _log.info("Auditor.pre_response: unsupported claims replaced", issues=issues)
+        return AuditResult(
+            passed=not issues,
+            issues=issues,
+            conservative_action="admit" if issues else "",
+            safe_text=safe,
+        )
 
-        Catches semantic fabrication the FabricationGuard regex/struct check misses.
-        Uses a forced self-check section in the RESPOND prompt, not a second LLM call
-        unless strictly necessary.
-        """
-        raise NotImplementedError("Auditor.pre_response_check — implement in Stufe 7")
+
+try:
+    from .prompts.verify import Draft
+except ImportError:
+    pass

@@ -286,3 +286,26 @@ statistisch nicht belastbar, einzelner Datenpunkt. Zählt NICHT gegen die C-Abna
 **Nächster Schritt:** In der Härtungsphase reproduzieren (mehrere Trials auf train-Hallucination-
 Tasks), reward_info/Trajektorie lesen, prüfen ob `FabricationGuard.sanitize()` den konkreten
 Fabrication-Typ strukturell abdeckt oder ob es ein neuer Entzugs-/Erfindungs-Typ ist.
+
+---
+
+## OI-015 — `_value_in_ledger` matcht Wert+Einheit nicht gegen numerisches Tool-Feld
+**Entdeckt:** 2026-07-08 (D Phase 3, Stufe-7-Tests)  **Stufe:** 5/7  **Priorität:** mittel
+
+`guard._value_in_ledger("42 minutes", corpus)` gibt **False** zurück, wenn der Ledger den
+Wert nur als numerisches Feld führt (Tool-Result `{"eta_minutes": 42}` → Korpus enthält „42",
+nicht „42 minutes"). `float("42 minutes")` scheitert, es bleibt der reine Substring-Vergleich.
+Betrifft **beide** Konsumenten desselben Helpers: FabricationGuard C5 (`sanitize`) und den
+neuen Stufe-7-Auditor (`pre_response_check`). Folge: ein korrekter Satz wie „arrival in 42
+minutes" kann fälschlich durch ein Eingeständnis ersetzt werden (False Positive), sobald das
+LLM den Claim-Wert mit Einheit („42 minutes") statt bloß „42" deklariert.
+
+**Warum bisher nicht aufgefallen:** Tool-Results, die Zahlen als Fließtext mit Einheit liefern
+(„Estimated arrival in 42 minutes."), matchen korrekt; nur die dict-mit-Einheit-Kombination
+trifft die Lücke. Der Stufe-7-Auditor prüft zudem nur die selbst-deklarierten `claims` — das
+Risiko besteht real erst, wenn das Draft-LLM Einheiten in den `value` schreibt.
+
+**Nächster Schritt:** In der Härtungsphase `_value_in_ledger` um eine numerische Token-Extraktion
+erweitern (Zahlen aus dem Wert ziehen und einzeln gegen den Korpus prüfen), statt reinem
+Substring-Vergleich. Vorher mit echten Trajektorien belegen, dass der FP tatsächlich auftritt —
+sonst Null-FP-Disziplin nicht durch eine Spekulativ-Änderung aufweichen.

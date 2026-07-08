@@ -446,16 +446,27 @@ class StateMachine:
 
     def _verify_and_respond(self, ctx: TurnContext) -> Action:
         from .guard import FabricationGuard, GuardResult
+        from .auditor import Auditor
         from . import prompts
 
         ctx.transition(State.VERIFY)
         draft = prompts.verify.draft_response(ctx)
-        fg = FabricationGuard()
-        safe = fg.sanitize(draft, ctx.ledger, model=ctx.model)
+
+        # Stufe 7: deterministic self-check of the draft's declared claims
+        # (no LLM call of its own — parses the forced self-check in `draft.claims`).
+        audit = Auditor().pre_response_check(draft, ctx.ledger)
         ctx.layer_decisions.append(GuardResult(
-            verdict="BLOCK" if safe != draft else "PASS",
+            verdict="BLOCK" if not audit.passed else "PASS",
+            layer="Auditor.pre_response",
+            reason=("; ".join(audit.issues) if audit.issues else "all claims backed"),
+        ))
+
+        fg = FabricationGuard()
+        safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model)
+        ctx.layer_decisions.append(GuardResult(
+            verdict="BLOCK" if safe != audit.safe_text else "PASS",
             layer="FabricationGuard.C5",
-            reason="draft modified" if safe != draft else "draft clean",
+            reason="draft modified" if safe != audit.safe_text else "draft clean",
         ))
 
         ctx.transition(State.RESPOND)

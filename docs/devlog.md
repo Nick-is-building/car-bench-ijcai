@@ -4,6 +4,39 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Auftrag D Phase 3: Stufe 7 schlanker Auditor (Ergebnis)
+
+**Hypothese (VOR Implementierung):** Eine gezielte Selbstprüfung ist an beiden
+Checkpunkten (vor state-changing Calls, vor der finalen Antwort) ohne eigenen
+Audit-LLM-Aufruf erreichbar — Checkpunkt 1 ist durch Stufe 4 (PolicyChecker) + Stufe 5
+(FabricationGuard C2/Provenance) bereits gedeckt; Checkpunkt 2 lässt sich in den
+bestehenden VERIFY-Draft-Call falten (erzwungener Self-Check, deterministisch geparst).
+
+**Umsetzung (ADR-0006):**
+- `prompts/verify.py`: `ClaimCheck`-Modell + `Draft.claims: list[ClaimCheck]`; Draft-Prompt
+  erzwingt ZUERST die Claim-Enumeration mit verbatim Ledger-Quelle, DANN die Antwort;
+  `draft_response` gibt jetzt das `Draft`-Objekt zurück (vorher `str`).
+- `auditor.py`: `Auditor.pre_response_check(draft, ledger)` — kein eigener LLM-Aufruf;
+  prüft nur numerische Claims (`_value_in_ledger` + deklarierte Quelle im Korpus),
+  ersetzt ungedeckte Sätze durch ein ehrliches Eingeständnis; String-Only-Claims bleiben
+  (Null-FP). `pre_action_check`-Stub entfernt (upstream gedeckt).
+- `state_machine.py`: `_verify_and_respond` verdrahtet den Auditor vor der
+  FabricationGuard-Sanitisierung; `Auditor.pre_response`-GuardResult in die C1-Telemetrie.
+
+**Ergebnis:**
+- Neue Suite `test_glassbox_auditor.py`: **6 Tests grün** (Wert im Ledger → PASS;
+  numerischer Wert bzw. deklarierte Quelle nicht im Ledger → Satz ersetzt; nicht-numerisch
+  → ignoriert (Null-FP); leere Claims → PASS; mehrere Claims, einer ungedeckt).
+- Gesamt-Suite **148 passed / 2 failed** — die 2 Fails sind die vorbestehenden OI-010-
+  Infrastrukturfehler (test_a2a_response_contract.py), keine Regression (+6 gegenüber 142).
+- ADR-0006 dokumentiert die „bewusst schlank"-Entscheidung.
+
+**Hypothese: BESTÄTIGT** (Code-Ebene) — Selbstprüfung ohne Zusatz-LLM, deterministisch,
+konservativer Default (Eingeständnis statt ungedeckter Behauptung). Wirkung wird im
+Abnahme-Lauf D mitgemessen (Cost-Gate + Freigabe offen).
+
+---
+
 ## 2026-07-08 — Auftrag D Phase 2: Stufe 6 Disambiguierungs-Motor (Ergebnis)
 
 **Umsetzung (ADR-0005):**
