@@ -4,6 +4,74 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Auftrag D Phase 2: Stufe 6 Disambiguierungs-Motor (Ergebnis)
+
+**Umsetzung (ADR-0005):**
+- `disambiguation.py`: `DisambiguationEngine` mit reiner Kaskade `resolve_slot`
+  (Prioritäten 0/2/3/4/5) + Plan-Loop-Guard `pre_flight` (gather/override/ask);
+  `PreferenceSlot`, `SlotResolution`, `PreFlightDisambiguation`, `_coerce`,
+  `_HEURISTIC_DEFAULTS`, `_TOOL_PREF_CATEGORY`.
+- `prompts/intake.py`: `Intent` um `value_ambiguities: list[ValueAmbiguity]` erweitert;
+  Prompt trennt Argument-Wert-Unterbestimmtheit (→ value_ambiguities) von echter
+  Ziel-/Tool-Mehrdeutigkeit (→ is_ambiguous).
+- `prompts/clarify.py`: `extract_preference` (enge Freitext→{default, prohibited}-Extraktion)
+  + `generate_clarification_question` implementiert.
+- `state_machine.py`: Disambiguierungs-Guard in `_plan_execute_loop` nach der Policy-
+  Pre-Flight (gather → EmitToolCalls(get_user_preferences); ask → `_respond_disambiguation`;
+  resolve → Argument-Override); `TurnContext.preferences_gathered` +
+  `disambiguation_resolved`; `_clarify` auf reine Ziel-Mehrdeutigkeit reduziert.
+
+**Ergebnis:**
+- Neue Suite `test_glassbox_disambiguation.py`: **18 Tests grün** (reine Kaskade beider
+  Untertypen, `_coerce`, Pre-Flight gather/override/ask, Null-FP user_stated + read-only,
+  gather-Verdrahtung in der State Machine).
+- Gesamt-Suite **142 passed / 2 failed** — die 2 Fails sind die vorbestehenden OI-010-
+  Infrastrukturfehler (test_a2a_response_contract.py), keine Regression (+18 gegenüber 124).
+- **OI-004 geschlossen.** ADR-0005 dokumentiert die Guard-Architektur-Entscheidung.
+
+**Hypothese: BESTÄTIGT** (Code-Ebene) — `internal` löst still, `user` fragt genau einmal,
+Value-Flow deterministisch. Wirkung auf die Disambiguation-Dimension wird im Abnahme-Lauf D
+gemessen (noch offen, Cost-Gate + Freigabe).
+
+---
+
+## 2026-07-08 — Auftrag D Phase 2: Stufe 6 Disambiguierungs-Motor (Hypothese, VOR Implementierung)
+
+**Ziel:** Disambiguation-Dimension von 0 % anheben. Zwei Untertypen (`disambiguation_internal`
+= NIE fragen, intern lösen; `disambiguation_user` = fragen wenn ≥2 gültige Kandidaten bleiben).
+
+**Architektur-Entscheidung (wird als ADR-0005 dokumentiert):** Der Disambiguierungs-Motor
+läuft NICHT als separater Pre-Plan-Schritt, sondern als **Pre-Flight-Guard in der
+PLAN-Schleife** — analog zu PolicyChecker (Stufe 4) und FabricationGuard (Stufe 5). Grund:
+Präferenzen (Priorität 2) und Kontext (Priorität 4) liegen erst nach aktivem Abruf im Ledger
+(`get_user_preferences`, `get_*`-Tools). Der Guard kann daher — wie AUT-POL:009 in Phase 1 —
+einen `get_user_preferences`-Call **injizieren und den state-changing Call zurückstellen**,
+bis die Präferenz vorliegt. Erst dann greift die Kaskade.
+
+**Auflösungs-Kaskade (deterministisch, feste Reihenfolge, Code entscheidet):**
+0. Policy-Regeln schließen Kandidaten aus (Prohibition).
+1. Expliziter User-Wert dieses Turns → Slot ist nicht mehrdeutig (Intake-Flag).
+2. Gelernte Präferenz (Default für den Slot) → **still anwenden, nicht fragen**.
+3. Eindeutiger Heuristik-Default (z. B. Multi-Stop-Route = fastest) → still anwenden.
+4. Kontext ergibt genau einen Kandidaten → still anwenden.
+5. Sonst, wenn state-changing UND ≥2 gültige Kandidaten → **EINE** gezielte Rückfrage.
+
+`disambiguation_internal` darf 5 nie erreichen, wenn 2/3/4 greifen — durch Testabdeckung
+belegt. Das LLM liefert nur Kandidaten (Intake flaggt mehrdeutige (tool, argument)-Slots;
+eine enge Extraktion strukturiert die freitextliche Präferenz in {default, prohibited}).
+Code entscheidet per Map-Lookup.
+
+**Value-Flow-Garantie:** Der aufgelöste Wert wird vom Guard **direkt im Call-Argument
+überschrieben** (nicht dem Planner-LLM überlassen). Test: geparste Präferenz 50 → Call-Arg
+exakt 50, nie 100.
+
+**Hypothese:** deterministischer Guard löst `disambiguation_internal` still (Null spurious
+Rückfragen) und stellt bei `disambiguation_user` genau eine Rückfrage. Keine Regression in
+der bestehenden grünen Pipeline (Stufe 4/5 unverändert). Kein Eval-Lauf in dieser Phase —
+Wirkung wird im Abnahme-Lauf D gemessen.
+
+---
+
 ## 2026-07-08 — Auftrag D Phase 1: OI-007 als generischer Regeltyp (requires_confirmation)
 
 **Motivation:** OI-007 (Wetter-Confirmation vor state-changing Call) war die letzte

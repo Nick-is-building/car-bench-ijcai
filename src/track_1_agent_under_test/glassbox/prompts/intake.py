@@ -12,6 +12,18 @@ class ToolParams(BaseModel):
     params: list[str] = Field(default_factory=list)
 
 
+class ValueAmbiguity(BaseModel):
+    """A state-changing tool argument the user did NOT pin down this turn.
+
+    Candidate generation only — Stufe 6 code decides the value. NEVER pick or
+    rank a value here; only flag which (tool, argument) is under-specified.
+    """
+    tool: str                       # exact catalog tool name the value flows into
+    argument: str                   # argument name on that tool (from its schema)
+    user_stated: bool = False       # did the user explicitly give this value this turn?
+    candidates: list[str] = Field(default_factory=list)  # known valid options, if a closed set
+
+
 class Intent(BaseModel):
     user_request_summary: str
     required_tools: list[str] = Field(default_factory=list)
@@ -21,6 +33,7 @@ class Intent(BaseModel):
     is_ambiguous: bool
     ambiguity_reason: str = ""
     clarification_question: str = ""
+    value_ambiguities: list[ValueAmbiguity] = Field(default_factory=list)
 
 
 _SYSTEM = """\
@@ -47,15 +60,27 @@ Never include values — list only parameter names, exactly as in the tool schem
 the catalog. List only if a step is genuinely impossible without a specific tool \
 that is not present. Leave empty otherwise.
 - is_state_changing: true if fulfilling the request changes vehicle or world state.
-- is_ambiguous: true ONLY if acting on the request requires information the \
-conversation does not contain. Do not flag requests as ambiguous when a sensible \
-default reading exists.
+- is_ambiguous: true ONLY for genuine GOAL or TOOL ambiguity — the request could \
+mean two different actions and nothing (preferences, defaults, car state) can decide \
+which. An under-specified ARGUMENT VALUE of an otherwise clear action (e.g. "open the \
+sunroof" without a percentage) is NOT is_ambiguous — flag it in value_ambiguities \
+instead, so it can be resolved deterministically. Do not flag requests as ambiguous \
+when a sensible default reading exists.
 - ambiguity_reason / clarification_question: fill only when is_ambiguous=true; \
 clarification_question must be a single natural, speakable question.
+- value_ambiguities: for each state-changing tool this request will call, list any \
+argument whose value the user did NOT explicitly pin down THIS turn (e.g. "open the \
+sunroof" gives no percentage). Set tool + argument to the exact catalog names and \
+user_stated=false. If the user DID state the value, set user_stated=true (or omit the \
+entry). candidates: only fill when the valid options are a small closed set you can \
+read from the conversation/tool results — NEVER invent, pick, or rank a value. The \
+value itself is decided later by deterministic code, not here.
 
 # Prohibitions
 - Never list a tool name that is not literally in the catalog.
 - Never mark a request ambiguous when the conversation already resolves it.
+- Never choose or guess a value for an under-specified argument — only flag it in \
+value_ambiguities.
 """
 
 

@@ -17,7 +17,9 @@ from .state_machine import (
 from .capability import CapabilityMatcher, CapabilityIndex
 from .policies import PolicyChecker, PolicyViolation, ALL_POLICIES
 from .guard import FabricationGuard, GuardResult
-from .disambiguation import DisambiguationEngine, DisambiguationResult
+from .disambiguation import (
+    DisambiguationEngine, PreFlightDisambiguation, PreferenceSlot, SlotResolution,
+)
 from .auditor import Auditor, AuditResult
 
 __all__ = [
@@ -27,6 +29,6 @@ __all__ = [
     "CapabilityMatcher", "CapabilityIndex",
     "PolicyChecker", "PolicyViolation", "ALL_POLICIES",
     "FabricationGuard", "GuardResult",
-    "DisambiguationEngine", "DisambiguationResult",
+    "DisambiguationEngine", "PreFlightDisambiguation", "PreferenceSlot", "SlotResolution",
     "Auditor", "AuditResult",
 ]

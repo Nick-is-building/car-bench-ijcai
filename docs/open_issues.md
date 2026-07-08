@@ -55,15 +55,21 @@ Unit-Tests: `test_sunshade_injected_when_position_unknown`,
 
 ---
 
-## OI-004 — DisambiguationEngine ignoriert user_preferences (Stufe-6-Stub)
-**Entdeckt:** 2026-07-04  **Stufe:** 6  **Priorität:** hoch (56 Disambiguation-Tasks)
+## OI-004 — DisambiguationEngine ignoriert user_preferences (Stufe-6-Stub) ✅ BEHOBEN
+**Entdeckt:** 2026-07-04  **Behoben:** 2026-07-08 (Auftrag D Phase 2)  **Stufe:** 6
 
-Alle `disambiguation_internal`-Tasks scheitern strukturell, weil der Stub
-`DisambiguationEngine.resolve()` immer `NotImplementedError` wirft. Die State Machine
-fällt dann auf die Intake-Rückfrage zurück — das ist für `internal`-Tasks falsch
-(`r_user_end_conversation` kann 0 werden, `r_actions_final` immer 0).
+**Behoben durch (ADR-0005):** Stufe 6 als Pre-Flight-Guard in der PLAN-Schleife
+implementiert (`disambiguation.py`, `DisambiguationEngine`). Deterministische
+Auflösungs-Kaskade (Prioritäten 0/2/3/4/5 aus wiki.md): Präferenz-Default → Heuristik
+→ Kontext → sonst genau EINE Rückfrage. Der Guard injiziert bei Bedarf
+`get_user_preferences` und stellt den state-changing Call zurück (gather-then-resolve),
+überschreibt den aufgelösten Wert **direkt im Call-Argument** (Value-Flow-Garantie) und
+fragt `disambiguation_user` nur bei ≥2 gültigen Kandidaten. `disambiguation_internal`
+löst still — nie Rückfrage, wenn Präferenz/Heuristik/Kontext greift. 18 Unit-Tests
+(`test_glassbox_disambiguation.py`) inkl. beider Untertypen, Null-FP und Value-Flow.
 
-**Nächster Schritt:** Stufe 6 implementieren; Priorität nach Stufe 4+5.
+**Historisch:** Der Stub `resolve()` warf `NotImplementedError`; die State Machine fiel
+auf die Intake-Rückfrage zurück — für `internal`-Tasks falsch. Jetzt behoben.
 
 ---
 

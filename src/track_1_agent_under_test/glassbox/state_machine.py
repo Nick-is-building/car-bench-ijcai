@@ -127,6 +127,10 @@ class TurnContext:
     layer_decisions: list = field(default_factory=list)
     # C2/C3/C4: provenance re-plan attempts before escalating to honesty sink
     provenance_rebuttals: int = 0
+    # Stufe 6: get_user_preferences already injected this turn (gather-once guard)
+    preferences_gathered: bool = False
+    # Stufe 6: silently resolved (tool, arg, value) tuples — telemetry
+    disambiguation_resolved: list = field(default_factory=list)
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -350,6 +354,45 @@ class StateMachine:
                 # whole batch deferred — re-plan with the pre-flight notes
                 continue
 
+            # Stufe 6 (ADR-0005): disambiguation guard. May gather preferences,
+            # silently override an under-specified argument (value-flow guarantee),
+            # or ask ONE targeted clarification question.
+            from .disambiguation import DisambiguationEngine
+            dis = DisambiguationEngine().pre_flight(ctx, calls)
+            if dis.inject_preferences is not None:
+                ctx.preferences_gathered = True
+                gather = PlannedCall(
+                    tool="get_user_preferences",
+                    arguments=dis.inject_preferences,
+                    call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_pref",
+                    rationale="disambiguation: retrieve learned preferences (Stufe 6)",
+                )
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="UNCERTAIN", layer="Disambiguation.gather",
+                    reason="preferences required before resolving under-specified argument",
+                ))
+                ctx.transition(State.EXECUTE)
+                if gather.signature not in ctx.executed_signatures:
+                    ctx.ledger.add_tool_call(gather.tool, gather.arguments, gather.call_id)
+                    ctx.executed_signatures.add(gather.signature)
+                    ctx.pending_calls = [gather]
+                    return EmitToolCalls([gather])
+                # already fetched (defensive) — fall through to re-plan
+                continue
+            if dis.question:
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="Disambiguation.clarify",
+                    reason="≥2 valid candidates remain — one clarification question",
+                ))
+                return self._respond_disambiguation(ctx, dis.question)
+            if dis.resolved:
+                ctx.disambiguation_resolved.extend(dis.resolved)
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="PASS", layer="Disambiguation.resolve",
+                    reason=f"silently resolved {len(dis.resolved)} arg(s)",
+                ))
+            calls = dis.calls
+
             # Stufe 5 (C2/C3/C4): argument provenance check before emitting calls.
             # State-changing calls with numeric args must have ledger-verified bindings.
             fg = FabricationGuard()
@@ -442,6 +485,14 @@ class StateMachine:
         ctx.transition(State.RESPOND)
         return self._finish(ctx, confirmations[0].question)
 
+    def _respond_disambiguation(self, ctx: TurnContext, question: str) -> Action:
+        """Stufe 6: ≥2 valid candidates remain for a state-changing argument —
+        ask ONE targeted question. The user's answer arrives next turn and the
+        planner re-plans with the now-explicit value."""
+        ctx.clarification_question = question
+        ctx.transition(State.RESPOND)
+        return self._finish(ctx, question)
+
     def _respond_refusal(self, ctx: TurnContext) -> Action:
         from . import prompts
 
@@ -477,26 +528,16 @@ class StateMachine:
             return "ambiguous" if ctx.intent.get("is_ambiguous") else "covered"
 
     def _clarify(self, ctx: TurnContext) -> Action | None:
-        """Returns an EmitText question, or None if resolved internally."""
-        from .disambiguation import DisambiguationEngine
-
-        try:
-            result = DisambiguationEngine().resolve(ctx)
-        except NotImplementedError:
-            # Stufe 6 pass-through: conservative default — ask the question
-            # that INTAKE already formulated (deterministic, no extra call)
-            question = ctx.intent.get("clarification_question", "").strip()
-            if not question:
-                reason = ctx.intent.get("ambiguity_reason", "your request")
-                question = f"Just to make sure I get this right: could you clarify {reason}?"
-            ctx.clarification_question = question
-            return self._finish(ctx, question)
-
-        if result.needs_user_clarification:
-            ctx.clarification_question = result.question
-            return self._finish(ctx, result.question)
-        ctx.intent = result.resolved_intent or ctx.intent
-        return None
+        """Genuine goal/tool ambiguity (is_ambiguous) that no cascade layer can
+        resolve. Under-specified argument VALUES are handled deterministically in
+        the plan-loop disambiguation guard (Stufe 6), not here. Conservative
+        default: ask the single question INTAKE already formulated."""
+        question = ctx.intent.get("clarification_question", "").strip()
+        if not question:
+            reason = ctx.intent.get("ambiguity_reason", "your request")
+            question = f"Just to make sure I get this right: could you clarify {reason}?"
+        ctx.clarification_question = question
+        return self._finish(ctx, question)
 
     def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall], matcher):
         from .policies import PolicyChecker
