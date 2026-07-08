@@ -4,6 +4,42 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H3 (Fix C1): OI-016 schema-aware Value-Flow-Resolver (Hypothese, vor Mini-Rerun)
+
+**Ausgangslage (aus dem Fix-A+B-Rerun, Eintrag unten):** Fix A + B wirken beide, aber dis_4 bleibt 0/3
+wegen eines dritten Root Cause: der **DisambiguationEngine-Value-Flow-Resolver** injiziert das
+überzählige `color` selbst (`disambiguation.py:234`), weil der LLM den mehrdeutigen Slot mit dem
+Natürlichsprach-Namen `color` flaggt und `pre_flight` diesen Namen nicht gegen das Tool-Schema prüft.
+Die Injektion passiert bei `state_machine.py:452` — NACH Fix A und `check_step` — deshalb greift Fix A
+hier nicht.
+
+**Fix C1 (vom User freigegeben — Root-Cause-Fix im Resolver):** in `DisambiguationEngine.pre_flight`
+wird vor jeder Injektion (`new_args[arg]=…`) deterministisch geprüft, ob `arg` überhaupt ein
+Schema-Parameter von `call.tool` ist — mit **derselben** `CapabilityIndex.has_parameter`, die der
+Matcher schon nutzt (Index aus `ctx.tools`, nicht neu erfunden). Ist der Slot-Name NICHT im Schema
+(`has_tool` True, `has_parameter` False), wird der Slot NICHT injiziert, sondern geloggt
+(`resolver slot name not in tool schema, skipped`). Der planner-eigene, bereits schema-korrekte
+`lightcolor`-Wert bleibt unberührt — er wird nie überschrieben oder dupliziert. Bei leeren/fehlenden
+Tools (`has_tool` False) bleibt das alte Verhalten (kein FP für tool-lose Test-Kontexte).
+
+**Fake-Tests (`tests/test_glassbox_disambiguation.py`, +2, gesamt 32 grün):** (1) Resolver versucht Slot
+unter erfundenem Namen `color` zu injizieren, während der Planner `lightcolor="PURPLE"` bereits gesetzt
+hat → Slot NICHT injiziert, kein `color`-Key, `lightcolor` unberührt, `resolved==[]`. (2) Slot unter
+korrektem Schema-Namen `lightcolor` → weiterhin normal injiziert (Null-FP). Gesamt-Suite: 189 passed /
+2 pre-existing OI-010.
+
+**Hypothese für den Mini-Rerun (dis_4 seed 10 + hallucination_0/2, je 3 Trials, agent sonnet-4-6,
+judge/user gemini-2.5-flash, anthropic):**
+(1) **disambiguation_4**: kein `color`-Duplikat mehr → emittierter Call
+`set_ambient_lights(lightcolor="PURPLE", on=True)` läuft sauber durch → kein TypeError, kein Loop →
+Reward 3/3 (oder zumindest kein Fehler mehr aus den jetzt drei behobenen Root Causes: Gather, Fix A/B,
+C1). Restrisiko: der Planner setzt in einem Trial `lightcolor` gar nicht — andere, nicht von C1
+adressierte Lücke.
+(2) **hallucination_0/2 (Regression)**: C1 verändert nur die Slot-Injektion des Resolvers; bei
+Hallucination-Tasks flaggt der Resolver keine set_ambient_lights-Slots → Rewards unverändert, **bleibt
+6/6** (darf nicht darunter fallen).
+**Cost-Gate: Freigabe erteilt (~$0.54, 9 Läufe). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
+
 ## 2026-07-08 — Härtung H3 (Fix A+B): OI-016 Unknown-Argument-Guard + Fehlerformat-Normalisierung (Hypothese, vor Mini-Rerun)
 
 **Ausgangslage (aus dem Verifikationslauf, Eintrag unten):** Option A wirkt — der PRE-PLAN-Gather

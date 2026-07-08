@@ -200,6 +200,15 @@ class DisambiguationEngine:
                 return PreFlightDisambiguation(calls=[], inject_preferences=pref_args)
 
         extractor = extractor or self._default_extractor
+        # OI-016 (C1): the LLM flags an ambiguous slot under its natural-language
+        # name (e.g. "color"), which is NOT always the tool's schema parameter
+        # name ("lightcolor"). Injecting the resolved value under that name adds a
+        # non-schema argument the evaluator rejects with a TypeError. Reuse the
+        # capability index's schema check (same has_parameter the matcher uses)
+        # to skip any slot whose argument name is absent from the tool schema —
+        # the planner's own, schema-correct value stays untouched.
+        from .capability import CapabilityIndex
+        index = CapabilityIndex(ctx.tools)
         out_calls = []
         resolved: list[tuple] = []
         for call in calls:
@@ -231,6 +240,12 @@ class DisambiguationEngine:
                     )
                     return PreFlightDisambiguation(calls=[], question=res.question)
                 if res.status == "resolved":
+                    if index.has_tool(call.tool) and not index.has_parameter(call.tool, arg):
+                        _log.info(
+                            "Disambiguation: resolver slot name not in tool schema, skipped",
+                            tool=call.tool, argument=arg,
+                        )
+                        continue
                     new_args[arg] = _coerce(res.value, call.arguments.get(arg))
                     resolved.append((call.tool, arg, new_args[arg]))
                     _log.info(

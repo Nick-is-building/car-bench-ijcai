@@ -275,6 +275,73 @@ class EnumValueAmbiguityTest(unittest.TestCase):
         self.assertEqual(out.calls, [])
 
 
+AMBIENT_SCHEMA = [
+    {"function": {
+        "name": "set_ambient_lights",
+        "description": "Turns the ambient light on (including the color) or off.",
+        "parameters": {
+            "properties": {
+                "on": {"type": "boolean"},
+                "lightcolor": {"type": "string",
+                               "enum": ["RED", "PURPLE", "NONE"]},
+            },
+            "required": ["on", "lightcolor"],
+            "additionalProperties": False,
+        },
+    }},
+]
+
+
+class ResolverSchemaGuardTest(unittest.TestCase):
+    """OI-016 (C1): the value-flow resolver must not inject a resolved value
+    under a slot name that is absent from the tool schema. The LLM may flag the
+    ambiguous slot under a natural-language name ("color") that differs from the
+    schema parameter ("lightcolor"); injecting it would add a non-schema argument
+    the evaluator rejects with a TypeError."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+
+    def test_invented_slot_name_is_not_injected(self):
+        # planner already drafted the schema-correct lightcolor; the resolver
+        # tries to inject under the invented name "color" → must be skipped.
+        call = PlannedCall(
+            tool="set_ambient_lights",
+            arguments={"on": True, "lightcolor": "PURPLE"},
+            call_id="c1",
+        )
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_ambient_lights",
+                                               argument="color")]},
+                   prefs_in_ledger=True)
+        ctx.tools = AMBIENT_SCHEMA
+        out = self.eng.pre_flight(
+            ctx, [call], extractor=lambda c, t, a: PreferenceSlot(default="PURPLE"))
+        self.assertEqual(len(out.calls), 1)
+        self.assertNotIn("color", out.calls[0].arguments)  # invented name dropped
+        self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")  # untouched
+        self.assertEqual(out.calls[0].arguments["on"], True)
+        self.assertEqual(out.resolved, [])  # nothing injected
+
+    def test_valid_schema_slot_still_injected_null_fp(self):
+        # regression: a slot flagged under the real schema name resolves normally.
+        call = PlannedCall(
+            tool="set_ambient_lights",
+            arguments={"on": True, "lightcolor": "RED"},  # placeholder
+            call_id="c1",
+        )
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_ambient_lights",
+                                               argument="lightcolor")]},
+                   prefs_in_ledger=True)
+        ctx.tools = AMBIENT_SCHEMA
+        out = self.eng.pre_flight(
+            ctx, [call], extractor=lambda c, t, a: PreferenceSlot(default="PURPLE"))
+        self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")
+        self.assertEqual(out.resolved,
+                         [("set_ambient_lights", "lightcolor", "PURPLE")])
+
+
 # ---------------------------------------------------------------------------
 # State-machine wiring — the guard injects get_user_preferences (gather)
 # ---------------------------------------------------------------------------
