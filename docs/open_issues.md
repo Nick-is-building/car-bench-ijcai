@@ -289,8 +289,8 @@ Fabrication-Typ strukturell abdeckt oder ob es ein neuer Entzugs-/Erfindungs-Typ
 
 ---
 
-## OI-015 — `_value_in_ledger` matcht Wert+Einheit nicht gegen numerisches Tool-Feld
-**Entdeckt:** 2026-07-08 (D Phase 3, Stufe-7-Tests)  **Stufe:** 5/7  **Priorität:** mittel
+## OI-015 — `_value_in_ledger` matcht Wert+Einheit nicht gegen numerisches Tool-Feld ✅ BEHOBEN
+**Entdeckt:** 2026-07-08 (D Phase 3, Stufe-7-Tests)  **Behoben:** 2026-07-08 (Härtung H2)  **Stufe:** 5/7  **Priorität:** mittel
 
 `guard._value_in_ledger("42 minutes", corpus)` gibt **False** zurück, wenn der Ledger den
 Wert nur als numerisches Feld führt (Tool-Result `{"eta_minutes": 42}` → Korpus enthält „42",
@@ -314,6 +314,25 @@ sonst Null-FP-Disziplin nicht durch eine Spekulativ-Änderung aufweichen.
 confirmed information about that." mitten in einer an sich validen Confirmation — der FP tritt
 real auf (vermutlich der 50 %-Präferenzwert). Trotzdem passt der Task 2/3; der FP kostet nicht
 zwingend den Reward, ist aber unschön. Token-Extraktion in der Härtung priorisieren.
+
+**Behoben durch (2026-07-08, Härtung H2):** `_value_in_ledger` zieht jetzt für Werte mit
+eingebetteten Ziffern (Einheit/Symbol) die numerischen **Tokens** (`\d+(?:\.\d+)?`) und prüft
+jeden einzeln int/float-normalisiert gegen die Zahlen des Korpus (`_number_backed`), statt reinem
+Substring-Vergleich. Der Clean-Number-Zweig (bloße Zahl) bleibt unverändert; reine Strings ohne
+Ziffern nutzen weiter den Substring-Match (paraphrase-tolerant). Damit ist es weiterhin eine
+faktische Zahlenprüfung, keine Freitext-Mustersuche — Provenance bleibt hart gefordert (z. B.
+„3 °C" ist NICHT durch einen Korpus gedeckt, der nur „30" enthält; „99 minutes" bleibt BLOCK).
+Beide Konsumenten (Guard C5 `sanitize`, Stufe-7-`Auditor`) teilen den Helper und profitieren.
+
+**Verify-not-assume:** Die H2-Briefing-Vermutung („Freitext-Mustersuche") war richtungsweisend,
+aber der reale Mechanismus ist die numerische Substring-Prüfung in `_value_in_ledger` — die
+Confirmation-Erkennung selbst läuft nicht über Freitext-Pattern, sondern über diesen geteilten
+Zahlen-Check. Fix verifiziert gegen `_value_in_ledger` direkt, Auditor und C5.
+
+**Tests:** `tests/test_glassbox_oi015.py` (14) — Helper-Fälle (Einheit/%/°C gedeckt; Substring
+einer größeren Zahl NICHT gedeckt; Multi-Token; Non-Numeric-Substring), Auditor-Null-FP inkl.
+verschiedener Formulierungen (`50%`/`50 percent`), fehlende Confirmation weiter BLOCK, C5-Null-FP
+mit gefaktem Claim-Extraktor. Bestehende `test_glassbox_auditor.py` (Regression Phase 1) grün.
 
 ---
 

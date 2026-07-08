@@ -130,16 +130,45 @@ def _ledger_text_corpus(ledger: Ledger) -> str:
 
 
 def _value_in_ledger(value: str | float | int, corpus: str) -> bool:
-    """True if value appears literally in the corpus (numeric or string)."""
+    """True if the value is backed by the ledger corpus.
+
+    Clean numbers are matched in their int/float forms. A value that carries
+    digits alongside a unit or symbol ("42 minutes", "50%", "22°C") is matched
+    by its numeric TOKENS, not by literal substring: the ledger often stores the
+    bare number (a dict field like {"eta_minutes": 42}) while the draft renders
+    it with a unit, so a literal substring match is a false positive (OI-015).
+    This is a factual number check, not a free-text pattern match. Non-numeric
+    strings still require a literal substring match.
+    """
     sv = str(value).strip()
     if not sv:
         return True
+    # Clean numeric value → normalised int/float comparison (unchanged behaviour).
     try:
         fv = float(sv)
         iv = int(fv)
         return sv in corpus or str(iv) in corpus or f"{fv}" in corpus
     except (ValueError, OverflowError):
-        return sv in corpus
+        pass
+    # Value with embedded digits (unit/symbol) → every numeric token must appear
+    # as a number in the corpus.
+    tokens = re.findall(r"\d+(?:\.\d+)?", sv)
+    if tokens:
+        corpus_numbers = set(re.findall(r"\d+(?:\.\d+)?", corpus))
+        return all(_number_backed(tok, corpus_numbers) for tok in tokens)
+    # No digits at all → literal substring (paraphrase-tolerant callers skip these).
+    return sv in corpus
+
+
+def _number_backed(token: str, corpus_numbers: set[str]) -> bool:
+    """True if a numeric token is present in the corpus (int/float normalised)."""
+    if token in corpus_numbers:
+        return True
+    try:
+        f = float(token)
+    except ValueError:
+        return False
+    return str(int(f)) in corpus_numbers or f"{f}" in corpus_numbers
 
 
 # ---------------------------------------------------------------------------

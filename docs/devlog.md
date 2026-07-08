@@ -4,6 +4,43 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H2: OI-015 numerische Provenance-Prüfung ohne Einheiten-FP (Ergebnis, kein Lauf)
+
+**Kein Eval-Lauf** — reine Code-Härtung, verifiziert durch deterministische Unit-Tests (keine
+API-Kosten).
+
+**Root Cause (verifiziert, nicht angenommen):** `guard._value_in_ledger` matchte einen Wert mit
+Einheit/Symbol (`"42 minutes"`, `"50%"`, `"22°C"`) per reinem Substring gegen den Ledger-Korpus.
+Führt ein Tool-Result die Zahl nur als numerisches Feld (`{"eta_minutes": 42}` → Korpus enthält
+„42", nicht „42 minutes"), scheitert `float("42 minutes")` und der Substring-Vergleich schlägt
+fehl → **False Positive**: ein valider, gedeckter Satz wird durch die ehrliche Senke ersetzt.
+Denselben Helper teilen **beide** Konsumenten: FabricationGuard C5 (`sanitize`) und der
+Stufe-7-`Auditor` (`pre_response_check`) — beide erbten den FP.
+
+**Verify-not-assume:** Die H2-Briefing-Vermutung („Freitext-Mustersuche in der
+Confirmation-Erkennung") war richtungsweisend, traf aber den Mechanismus nicht: die
+Confirmation-/Claim-Deckung läuft nicht über Freitext-Pattern, sondern über genau diesen
+geteilten numerischen Substring-Check. Belegt am D-Lauf (`disambiguation_0`: Senke mitten in einer
+validen Confirmation, vermutlich der 50 %-Präferenzwert).
+
+**Fix (Null-FP-Härtung, weiterhin harte Provenance):** `_value_in_ledger` extrahiert für Werte mit
+eingebetteten Ziffern die numerischen **Tokens** (`\d+(?:\.\d+)?`) und prüft jeden einzeln
+int/float-normalisiert gegen die Zahlen des Korpus (`_number_backed`). Clean-Number-Zweig (bloße
+Zahl) unverändert; reine Strings ohne Ziffern nutzen weiter den Substring-Match. Damit bleibt es
+eine **faktische Zahlenprüfung, keine Freitext-Mustersuche**: `"3 °C"` ist NICHT durch einen
+Korpus gedeckt, der nur „30" enthält; `"99 minutes"` bleibt BLOCK.
+
+**Tests (`tests/test_glassbox_oi015.py`, 14 grün):** Helper direkt (Einheit/%/°C gedeckt;
+Substring einer größeren Zahl nicht gedeckt; Multi-Token alle-müssen-decken; Non-Numeric
+Substring), Auditor-Null-FP inkl. `50%`/`50 percent`-Formulierungen, fehlende Confirmation weiter
+BLOCK, C5-Null-FP mit gefaktem Claim-Extraktor. Bestehende `test_glassbox_auditor.py` (Phase-1-
+Regression) grün. Gesamt-Suite: 171 passed, 2 failed (nur vorbestehende OI-010-Infra,
+`test_a2a_response_contract.py`).
+
+**OI-015 geschlossen.**
+
+---
+
 ## 2026-07-08 — Härtung H1: OI-017 Tool-Arg-Enum-Validierung + Retry-Bound (Ergebnis, kein Lauf)
 
 **Kein Eval-Lauf** — reine Code-Härtung gegen einen im Abnahme-Lauf D belegten Fehler,
