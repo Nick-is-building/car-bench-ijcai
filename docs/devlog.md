@@ -1623,3 +1623,35 @@ der Judge-Varianz erfordert einen Task mit stabilem Agent, der nahe der Bewertun
 solche gab es unter base_0/16/20 nicht (alle klar 1.0). Als Paper-Aussage tragfähig: „Judge-Determinismus
 auf determiniert gelösten Tasks belegt (base_20, 3/3 identisch); Reward robust gegen Agent-Trajektorie-
 Varianz (base_0/16)."
+
+---
+
+## 2026-07-08 — AUFTRAG E, Phase E2: Voller Dev-Lauf — Hypothese (VOR dem Lauf committet)
+
+**Umfang (vom User freigegeben, Option B):** 20 Tasks/Split × 3 Trials = 180 Task-Runs, ~$20.
+Deterministische Auswahl `num_tasks=20`, `shuffle=False` → die ersten 20 IDs je Split:
+base_0..38 (gerade), hallucination_0..38 (gerade), disambiguation_0..38 (gerade).
+**17-18 dieser Tasks pro Split wurden NIE zuvor gelaufen** — echtes neues Terrain, nicht nur
+Wiederholung bekannter Tasks. Enthält die OI-Tasks: base_10 (OI-007), disambiguation_0/2/4
+(OI-016/017, inzwischen gefixt), hallucination_0 (OI-014).
+Config: `local_e2_dev.toml`, seed 10, Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash,
+provider anthropic. Budget-Vorgabe: nur 2-3 Läufe dieser Größe im Restprojekt → E3-Nachfixes nur
+auf betroffenen Tasks re-verifizieren, nicht voll wiederholen.
+
+**Hypothese (erwartete Pass^3 pro Dimension, aus bisherigen kleinen Stichproben):**
+- **Base ~65-80 %:** bekannte Passer base_0/16/20 (je 3/3 über 4-5 Läufe); base_10 fällt an OI-007
+  (Confirmation-Handshake, LLM-POL:004/007 noch nicht bestückt) → ~0-1/3. 16 unbekannte Base-Tasks;
+  deterministischer AUT-Kern (policy_aut_errors bisher 0/60) sollte tragen, Restrisiko Klasse-B/C-
+  Policies + LLM-Pfade.
+- **Hallucination ~70-90 %:** FabricationGuard (Stufe 5) strukturell stark; hall_0/2 zuletzt 3/3
+  (hall_0 einmal 2/3 = Varianz, einmal Docker-Fail OI-014). 18 unbekannte Hall-Tasks; Risiko neuer
+  Entzugs-/Erfindungstypen, die die Kaskade nicht abdeckt (OI-014-Klasse).
+- **Disambiguation ~45-70 % (schwächste, höchste Unsicherheit):** nach H1 (OI-017 Enum) + H3 (OI-016
+  Kaskade) sollten dis_0/2/4 deutlich besser sein (C1-Verify dis_4 3/3). 17 unbekannte Dis-Tasks;
+  interne vs. user-Mehrdeutigkeit, Value-Flow-Resolver auf neuen Enums ungetestet → hier erwarte ich
+  die meisten neuen Fehlerklassen für E3.
+- **Gesamt Pass^3 ~60-75 %.** Pass@3 deutlich höher (~80-90 %). Ziel des Laufs ist NICHT ein
+  Höchstwert, sondern eine vollständige, ehrliche Fehlerkarte für E3 + Schicht-Telemetrie.
+
+**Zusätzlich erhoben:** Schicht-Telemetrie aus `_local/runs/e2_agent.log` (welche Kaskaden-Schicht
+entschied final, Eskalationen, Ehrlichkeits-Senke), Pass^1/Pass^3/Pass@3 pro Dimension GETRENNT.

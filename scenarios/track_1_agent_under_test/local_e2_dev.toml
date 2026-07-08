@@ -1,0 +1,23 @@
+# Auftrag E, Phase E2 — Voller Dev-Lauf (einziges Validierungssignal vor Submission 19. Juli).
+# 20 Tasks/Split × 3 Trials = 180 Task-Runs (deterministisch, shuffle=False → erste 20 IDs je Split).
+# Misst Pass^1/Pass^3/Pass@3 pro Dimension + Schicht-Telemetrie über neues Task-Terrain.
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/e2_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_e2_dev.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_num_tasks = 20
+tasks_hallucination_num_tasks = 20
+tasks_disambiguation_num_tasks = 20
+seed = 10
+max_steps = 50
