@@ -391,6 +391,40 @@ untergräbt die strukturelle Halluzinations-Sperre an anderer Stelle → Regress
 hallucination/base-Set, nur mit einem (kostenpflichtigen) Kalibrierlauf absicherbar. Optionen +
 Aufwand an User übergeben (siehe PROGRESS.md), Entscheidung offen.
 
+**OPTION A umgesetzt + verifiziert (2026-07-08, commit 5e48541, Lauf `20260708-203311`):** ⚠️ WEITER
+OFFEN — Option A wirkt, aber ein **NEUER, separater Blocker** verhindert den Reward. STOPP an User.
+
+Deterministischer PRE-PLAN-Gather (`DisambiguationEngine.pre_plan_gather`, gegatet über
+`_TOOL_PREF_VALUE_ARG={set_ambient_lights: lightcolor}`): bei leerem Plan Präferenz holen, damit die
+nächste Plan-Runde den Wert setzen kann. **Funktioniert:** in allen 3 dis_4-Trials feuert der Gather,
+die Präferenz kommt zurück, und der Planner draftet `set_ambient_lights` **mit korrektem PURPLE**.
+
+**NEUER Root Cause (≠ Gather):** Der Planner hängt ein halluziniertes Nicht-Schema-Argument an:
+`set_ambient_lights(lightcolor="PURPLE", color="PURPLE", on=true)` →
+`Error: SetAmbientLights.invoke() got an unexpected keyword argument 'color'` → Soll-Action nie
+ausgeführt → Reward 0/3. Wert korrekt, überzähliges `color` killt den Call.
+
+**Zweite deterministische Lücke:** Das Fehler-Result ist ein Plain-String (`"Error: …"`), NICHT der
+Contract `{"status":"FAILURE"}` → `ledger._is_failure_result`=False → der OI-017-Retry-Bound (b)
+greift nicht → identischer Fehl-Call loopt bis `MAX_PLAN_ROUNDS` (16).
+
+**Zwei saubere, deterministische Fix-Optionen (Entscheidung offen, an User übergeben):**
+- **(A) Unknown-Argument-Guard** (Kern-Fix, klein): analog zur OI-017-Enum-Validierung im
+  `_plan_execute_loop` jedes Call-Argument gegen das Tool-Schema (`matcher.index`) prüfen; nicht
+  im Schema stehende Argumente **strippen** (bevorzugt) oder per bounded Re-Plan-Hinweis
+  zurückweisen. Behebt dis_4 direkt (`color` fällt weg → valider Call). Aufwand ~1 Gate + 3–4
+  Fake-Tests. Risiko: sehr gering, rein deterministisch, Lesson-1a-konform.
+- **(B) Fehler-Erkennung härten** (Robustheit, klein): `_is_failure_result` erkennt zusätzlich
+  Plain-String-Ergebnisse, die mit `Error:`/`Exception` beginnen, als Failure → Retry-Bound greift,
+  kein 16-Runden-Loop mehr. Aufwand ~1 Prädikat + 2 Fake-Tests. Fängt die Loop-Klasse generell.
+- Empfehlung: **A + B zusammen** (A behebt dis_4, B verhindert die Loop-Klasse künftig). Beide
+  deterministisch, kein Score-Tuning, kein LLM-Kopplungsrisiko. Verifikation: ein Mini-Rerun dis_4
+  (3 Trials) + Hallucination-Regression — Cost-Gate wie gehabt.
+
+Hallucination-Regression (Kontrolle, dieser Lauf): hall_0 2/3, hall_2 3/3 (Baseline je 3/3); hall_1
+nicht im train-Split. Gather feuerte in KEINEM Hallucination-Kontext → hall_0-Abweichung ist
+LLM/Judge-Varianz, keine Gate-Regression.
+
 ---
 
 ## OI-017 — control_window mit ungültigem `window`-Enum nach korrekter Rückfrage ✅ BEHOBEN

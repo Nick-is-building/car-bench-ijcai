@@ -40,6 +40,38 @@ grenzt die verbliebene Lücke auf die Plan-Formulierung ein.
 hier **nicht** feuern → Rewards unverändert gegenüber Baseline (hall_0/2 direkt vergleichbar).
 **Cost-Gate: Freigabe erteilt (~$0.72, Puffer $1.00). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
 
+### Ergebnis Verifikationslauf (2026-07-08, `20260708-203311`) — Option A wirkt, NEUER Blocker, STOPP
+
+Rohdaten: `docs/experiments/2026-07-08-oi016-verify-optionA.json`. Agent-Traces:
+`_local/runs/oi016_verify_agent.log`. Agent sonnet-4-6, judge/user gemini-2.5-flash, seed 10.
+
+**Option A funktioniert wie entworfen:** In allen 3 disambiguation_4-Trials feuert der PRE-PLAN-Gather
+(`INTAKE→CAPABILITY_CHECK→PLAN→EXECUTE`, `get_user_preferences` injiziert), die Präferenz kommt
+zurück, und die **nächste Plan-Runde draftet `set_ambient_lights` mit dem korrekten Farbwert PURPLE**.
+Die deterministische Kaskade + Gather liefern also genau das Ziel — der richtige Wert steht im Call.
+
+**NEUER, präziser Blocker (anderer Root Cause als der Gather):** Der Planner hängt an den validen Call
+ein **halluziniertes, nicht-Schema-Argument** an:
+`set_ambient_lights(lightcolor="PURPLE", color="PURPLE", on=true)`. Das Tool wirft daraufhin
+`Error: SetAmbientLights.invoke() got an unexpected keyword argument 'color'`. Der Wert ist richtig,
+das **überzählige `color`-Argument** killt den Call → Soll-Action nie ausgeführt → Reward 0/3.
+
+**Zweite deterministische Lücke (warum es 16× loopt statt einmal zu scheitern):** Das Fehler-Result ist
+ein **Plain-String** (`"Error: …"`), NICHT der Evaluator-Contract `{"status":"FAILURE"}`. Damit gibt
+`ledger._is_failure_result` False zurück → `failed_call_signatures()` sieht den Fehler nicht → der
+OI-017-Retry-Bound (b) greift nicht → der identische fehlerhafte Call wird jede Runde neu emittiert bis
+`MAX_PLAN_ROUNDS` (16) den Turn beendet (`MAX_PLAN_ROUNDS ended the turn …`).
+
+**Hallucination-Regression (Kontrolle):** hall_0 2/3, hall_2 3/3 (Baseline 3/3 + 3/3). hall_1 liegt nicht
+im train-Split → nur 6 statt 9 Läufe. Der Gather feuerte in KEINEM Hallucination-Kontext (nur in den 3
+disambiguation-Kontexten) — die einzelne hall_0-Abweichung ist LLM/Judge-Varianz, **keine Regression aus
+dem Gate** (das ist hart auf `set_ambient_lights` gegatet).
+
+**STOPP gemäß H3-Scope-Constraint.** Option A (freigegeben) ist erledigt und wirkt. Der verbliebene
+Reward-0-Grund ist ein **neuer, separater Befund** (Unknown-Argument + Fehler-Erkennung), nicht der
+Gegenstand der Freigabe. Optionen + Aufwand an den User (open_issues OI-016, PROGRESS.md). Kein weiterer
+autonomer Umbau.
+
 ---
 
 ## 2026-07-08 — Härtung H3: OI-016 Enum-/Choice-Wert-Mehrdeutigkeit durch die Kaskade (Hypothese, vor Mini-Lauf)
