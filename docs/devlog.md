@@ -4,6 +4,51 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-08 — Härtung H3 (Fix A+B): OI-016 Unknown-Argument-Guard + Fehlerformat-Normalisierung (Hypothese, vor Mini-Rerun)
+
+**Ausgangslage (aus dem Verifikationslauf, Eintrag unten):** Option A wirkt — der PRE-PLAN-Gather
+feuert und die nächste Plan-Runde draftet `set_ambient_lights` mit korrektem `lightcolor="PURPLE"`.
+Zwei separate deterministische Lücken verhindern aber den Reward: (A) der Planner hängt ein
+halluziniertes, nicht-Schema-Argument an (`color="PURPLE"` neben dem validen `lightcolor`) → das Tool
+wirft `TypeError`; (B) dieses Fehler-Result ist ein Plain-String (`"Error: …"`), nicht der
+Evaluator-Contract `{"status":"FAILURE"}`, also erkennt der OI-017-Retry-Bound den Fehler nicht und der
+identische Call loopt bis `MAX_PLAN_ROUNDS`.
+
+**Fix A — Unknown-Argument-Guard (Lesson 1a, im selben Codepfad wie die OI-017-Enum-Validierung):** in
+der Step-Bau-Schleife, VOR `check_step` und der Emission, wird jedes Argument, das nicht im Tool-Schema
+steht (`has_parameter` False), entfernt. Kein stilles Wegwerfen: jedes gestrippte Argument erzeugt eine
+policy_note (`stripped unknown argument 'X', not in schema for tool Y`) UND eine GuardResult-Layer-
+Entscheidung (`ArgumentSchema.unknown`) plus ein `_log.info` — der Trace zeigt genau, was Code entfernt
+hat und warum. Der Call läuft danach nur mit Schema-konformen Argumenten weiter.
+
+**Fix B — Fehlerformat-Normalisierung (generisch, `ledger._is_failure_result`):** ein Tool-Result gilt
+jetzt auch dann als Fehler, wenn es ein Plain-String ist, der (case-insensitiv, nach lstrip) mit
+`error:`, `exception:` oder `traceback (` beginnt — die Form, die ein raising Tool tatsächlich
+zurückgibt. Bewusst NICHT naiver `"error"`-Prefix (sonst False-Positive auf „Error-free …"). Der
+strukturierte `{"status":"FAILURE"}`-Pfad (OI-017) bleibt unverändert erkannt. Damit greift der
+Retry-Bound auch bei Plain-String-Fehlern → identischer Fehl-Call endet in der Senke statt bei
+MAX_PLAN_ROUNDS.
+
+**Fake-Tests (`tests/test_glassbox_oi017.py` +4, gesamt 13 grün; `tests/test_glassbox_state_machine.py`
+angepasst):** Fix A — valides + unbekanntes Argument → unbekanntes gestrippt, Note+Layer im Trace, Call
+läuft mit dem validen Argument durch (kein Crash); nur valide Argumente → unverändert (Null-FP). Fix B —
+Plain-String `"Error: …"` → als Fehler erkannt (Signatur im Bound); benigne Strings („Error-free …",
+„The route is clear.", „errors were avoided") → kein Fehler. Der alte
+`test_execute_time_missing_param_yields_refusal` wurde auf die neue Strip-and-Proceed-Semantik
+umgestellt. Gesamt-Suite: 187 passed / 2 pre-existing OI-010.
+
+**Hypothese für den Mini-Rerun (dis_4 seed 10 + hallucination_0/2, je 3 Trials, agent sonnet-4-6,
+judge/user gemini-2.5-flash, anthropic):**
+(1) **disambiguation_4**: Gather feuert wie zuvor, PURPLE korrekt gedrafted; Fix A strippt das
+überzählige `color` → `set_ambient_lights(lightcolor="PURPLE", on=True)` läuft sauber durch → KEIN
+Argument-Fehler, KEIN Loop → Reward 3/3 (oder zumindest kein Fehler mehr aus diesen zwei Root Causes).
+Restrisiko: der Planner könnte in einem Trial gar keinen `lightcolor` setzen (LLM-Urteil) — das wäre
+eine andere, nicht von A/B adressierte Lücke.
+(2) **hallucination_0/2 (Regression)**: weder Gather noch Guard dürfen hier etwas verändern → Rewards
+unverändert gegenüber Baseline (3/3, 3/3). Fix A strippt nur, wenn der Planner ein nicht-Schema-Argument
+emittiert — bei Hallucination-Tasks gibt es keinen solchen Call.
+**Cost-Gate: Freigabe erteilt (~$0.54, 9 Läufe). Kein Live-Tail, ein `tail -n 40` nach Laufzeit.**
+
 ## 2026-07-08 — Härtung H3 (Option A): OI-016 deterministischer PRE-PLAN-Gather (Hypothese, vor Verifikationslauf)
 
 **Ausgangslage (aus dem Mini-Lauf verifiziert, siehe Eintrag unten):** Intake-Routing ist behoben

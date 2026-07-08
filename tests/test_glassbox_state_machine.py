@@ -315,17 +315,32 @@ class CapabilityCheckIntegrationTest(unittest.TestCase):
         self.assertIsInstance(action, EmitText)
         self.assertEqual(action.text, FAKE_REFUSAL.response)
 
-    def test_execute_time_missing_param_yields_refusal(self):
-        """check_step catches missing param during EXECUTE → refusal."""
+    def test_execute_time_unknown_param_is_stripped_and_call_proceeds(self):
+        """OI-016 Fix A: a non-schema argument is stripped (not refused).
+
+        The call proceeds with only schema-conform args, and the strip is
+        visible in the trace (policy note + ArgumentSchema.unknown layer
+        decision) — never silently discarded (Lesson 1a).
+        """
         fake = FakeLLM(
             intents=[intent_ok()],
-            plans=[Plan(steps=[step("get_weather", {"nonexistent_param": 1})])],
-            refusals=[FAKE_REFUSAL],
+            plans=[
+                Plan(steps=[step("get_weather",
+                                 {"location": "current", "nonexistent_param": 1})]),
+                Plan(steps=[], done_reason="request fulfilled"),
+            ],
+            drafts=[FAKE_DRAFT],
         )
-        _, trajectory, action = run_scripted(fake)
-        self.assertEqual(trajectory, [])
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertEqual(trajectory, [
+            [("get_weather", {"location": "current"}, "call_t1_r1_s0")],
+        ])
         self.assertIsInstance(action, EmitText)
-        self.assertEqual(action.text, FAKE_REFUSAL.response)
+        self.assertEqual(action.text, FAKE_DRAFT.response)
+        self.assertTrue(any("stripped unknown argument 'nonexistent_param'" in n
+                            for n in ctx.policy_notes))
+        self.assertTrue(any(d.layer == "ArgumentSchema.unknown"
+                            for d in ctx.layer_decisions))
 
 
 # ---------------------------------------------------------------------------

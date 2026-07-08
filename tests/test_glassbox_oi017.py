@@ -142,6 +142,37 @@ class FailedSignaturesTest(unittest.TestCase):
         led.add_tool_result("get_weather", "It is sunny.", "c1")
         self.assertEqual(led.failed_call_signatures(), set())
 
+    def test_plainstring_error_counts_as_failure(self):
+        # OI-016 Fix B: a raising tool surfaces "Error: ..." as a plain string,
+        # NOT the {"status":"FAILURE"} contract — it must still count so the
+        # retry bound stops the identical failing call from looping.
+        led = Ledger()
+        led.add_user_turn("x")
+        led.add_tool_call(
+            "set_ambient_lights", {"lightcolor": "PURPLE", "on": True}, "c1")
+        led.add_tool_result(
+            "set_ambient_lights",
+            "Error: SetAmbientLights.invoke() got an unexpected keyword argument 'color'",
+            "c1")
+        sigs = led.failed_call_signatures()
+        self.assertIn(
+            "set_ambient_lights:" + json.dumps(
+                {"lightcolor": "PURPLE", "on": True}, sort_keys=True),
+            sigs,
+        )
+
+    def test_benign_plainstring_still_not_failure(self):
+        # Null-FP: plain strings that merely contain/lead with the letters
+        # "error" but are not the "Error:"/"Exception:"/"Traceback (" shape
+        # must never be flagged as failures (regression guard for Fix B).
+        for text in ("Error-free and sunny.", "The route is clear.",
+                     "errors were avoided"):
+            led = Ledger()
+            led.add_user_turn("x")
+            led.add_tool_call("get_weather", {}, "c1")
+            led.add_tool_result("get_weather", text, "c1")
+            self.assertEqual(led.failed_call_signatures(), set(), msg=text)
+
 
 # ---------------------------------------------------------------------------
 # Enum validation in the plan-execute loop
@@ -183,6 +214,80 @@ class EnumGateWiringTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Cross-turn tool-execution-error retry bound
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# OI-016 Fix A — unknown-argument guard in the plan-execute loop
+# ---------------------------------------------------------------------------
+
+AMBIENT_TOOLS = [
+    {"function": {
+        "name": "set_ambient_lights",
+        "description": "Turn ambient lights on/off and set the color.",
+        "parameters": {
+            "properties": {
+                "on": {"type": "boolean"},
+                "lightcolor": {
+                    "type": "string",
+                    "enum": ["RED", "PURPLE", "BLUE", "GREEN", "WHITE"],
+                },
+            },
+            "required": ["on", "lightcolor"],
+        },
+    }},
+]
+
+
+class UnknownArgumentGuardTest(unittest.TestCase):
+    def _ctx(self):
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Set the ambient lights to my usual color.")
+        return ledger, TurnContext(ledger=ledger, tools=AMBIENT_TOOLS, model="fake")
+
+    def _intent(self):
+        return Intent(
+            user_request_summary="Set ambient light color",
+            required_tools=["set_ambient_lights"],
+            is_state_changing=True, is_ambiguous=False, value_ambiguities=[])
+
+    def test_strips_non_schema_argument_and_emits_valid_call(self):
+        # planner adds a hallucinated duplicate `color` alongside `lightcolor`
+        ledger, ctx = self._ctx()
+        plan = Plan(steps=[PlanStep(
+            tool="set_ambient_lights",
+            arguments_json=json.dumps(
+                {"lightcolor": "PURPLE", "color": "PURPLE", "on": True}))])
+        fake = FakeLLM(intents=[self._intent()], plans=[plan])
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual([c.tool for c in action.calls], ["set_ambient_lights"])
+        args = action.calls[0].arguments
+        self.assertEqual(args, {"lightcolor": "PURPLE", "on": True})  # `color` stripped
+        self.assertNotIn("color", args)
+        # the strip is traceable, never silent
+        self.assertTrue(any("stripped unknown argument 'color'" in n
+                            for n in ctx.policy_notes))
+        self.assertTrue(any(d.layer == "ArgumentSchema.unknown"
+                            for d in ctx.layer_decisions))
+
+    def test_only_valid_arguments_pass_unchanged_null_fp(self):
+        ledger, ctx = self._ctx()
+        plan = Plan(steps=[PlanStep(
+            tool="set_ambient_lights",
+            arguments_json=json.dumps({"lightcolor": "PURPLE", "on": True}))])
+        fake = FakeLLM(intents=[self._intent()], plans=[plan])
+        machine = StateMachine()
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual(action.calls[0].arguments, {"lightcolor": "PURPLE", "on": True})
+        self.assertFalse(any(d.layer == "ArgumentSchema.unknown"
+                             for d in ctx.layer_decisions))
+
 
 class RetryBoundWiringTest(unittest.TestCase):
     def test_identical_failed_call_is_not_retried(self):

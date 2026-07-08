@@ -166,8 +166,14 @@ class Ledger:
 def _is_failure_result(content: Any) -> bool:
     """True if a tool result reports a runtime failure (evaluator contract).
 
-    The car-bench tools return a JSON string like ``{"status": "FAILURE",
-    "errors": {...}}`` on rejection; a plain-string result never counts.
+    Two shapes count as failure (OI-016):
+      1. The structured evaluator contract — a JSON string like
+         ``{"status": "FAILURE", "errors": {...}}`` on rejection.
+      2. A plain-string result that a raising tool surfaces, e.g. a
+         ``TypeError`` on an unexpected keyword argument comes back as
+         ``"Error: SetAmbientLights.invoke() got an unexpected keyword ..."``.
+         Recognising these lets the retry bound stop an identical failing call
+         from looping to MAX_PLAN_ROUNDS instead of treating it as success.
     """
     import json as _json
 
@@ -177,13 +183,19 @@ def _is_failure_result(content: Any) -> bool:
     try:
         data = _json.loads(text)
     except (ValueError, TypeError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    status = data.get("status")
-    if isinstance(status, str) and status.upper() == "FAILURE":
-        return True
-    return bool(data.get("errors"))
+        data = text  # not JSON — treat the raw string as the payload
+    if isinstance(data, dict):
+        status = data.get("status")
+        if isinstance(status, str) and status.upper() == "FAILURE":
+            return True
+        return bool(data.get("errors"))
+    if isinstance(data, str):
+        s = data.lstrip().lower()
+        # Match the shape a raising tool actually produces ("Error: ...",
+        # "Exception: ...", a Python "Traceback (most recent call last):"),
+        # not merely any word starting with "error" (e.g. "Error-free ...").
+        return s.startswith(("error:", "exception:", "traceback ("))
+    return False
 
 
 def _now() -> datetime:

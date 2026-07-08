@@ -315,6 +315,39 @@ class StateMachine:
                     call_id=f"call_t{ctx.ledger.current_turn}_r{ctx.plan_round}_s{i}",
                     rationale=step.get("rationale", ""),
                 )
+                # OI-016 Fix A: unknown-argument guard (Lesson 1a). The planner
+                # sometimes emits an argument absent from the tool schema (e.g.
+                # a duplicate `color` next to the valid `lightcolor`); the
+                # evaluator raises a TypeError and the identical failing call
+                # would loop to MAX_PLAN_ROUNDS. Strip every non-schema argument
+                # before the call is validated or emitted — never silently:
+                # each strip is a policy note AND a layer decision so the trace
+                # shows exactly what code removed and why.
+                if matcher.index.has_tool(call.tool):
+                    unknown = [a for a in call.arguments
+                               if not matcher.index.has_parameter(call.tool, a)]
+                    if unknown:
+                        from .guard import GuardResult
+                        kept = {a: v for a, v in call.arguments.items()
+                                if a not in unknown}
+                        for a in unknown:
+                            ctx.policy_notes.append(
+                                f"stripped unknown argument {a!r}, not in schema "
+                                f"for tool {call.tool}"
+                            )
+                        ctx.layer_decisions.append(GuardResult(
+                            verdict="UNCERTAIN", layer="ArgumentSchema.unknown",
+                            reason=f"stripped non-schema argument(s) {unknown} "
+                                   f"from {call.tool}",
+                        ))
+                        _log.info(
+                            "Unknown-argument guard: stripped non-schema args",
+                            tool=call.tool, stripped=unknown,
+                        )
+                        call = PlannedCall(
+                            tool=call.tool, arguments=kept,
+                            call_id=call.call_id, rationale=call.rationale,
+                        )
                 # per-step capability guard: never emit a call the evaluator
                 # has no tool for (deterministic, no LLM)
                 if matcher.check_step(call.tool, call.arguments) == "uncovered":
