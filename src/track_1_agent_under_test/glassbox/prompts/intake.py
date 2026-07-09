@@ -80,15 +80,22 @@ ambiguous when a sensible default reading exists.
 clarification_question must be a single natural, speakable question.
 - value_ambiguities: for each state-changing tool this request will call, list any \
 argument whose value the user did NOT explicitly pin down THIS turn (e.g. "open the \
-sunroof" gives no percentage). Set tool + argument to the exact catalog names and \
-user_stated=false. If the user DID state the value, set user_stated=true (or omit the \
-entry). candidates: only fill when the valid options are a small closed set you can \
-read from the conversation/tool results — NEVER invent, pick, or rank a value. The \
-value itself is decided later by deterministic code, not here. \
-relative_change: set to "increase" or "decrease" ONLY when the user asks to move a \
-numeric value up or down without naming a target ("turn the fan up a bit", "lower it \
-by one"); leave null otherwise. Never compute the resulting number — code derives it \
-from the current reading.
+sunroof" gives no percentage). Field rules — the downstream code is table-driven and \
+matches on these exact fields, so precision matters: \
+tool + argument MUST use the EXACT schema parameter name from the tool catalog — \
+never shorten, generalize, or paraphrase (if the parameter is named "foo_bar_baz" in \
+the catalog, do not write "foo" or "foo_bar"). This holds even when the argument's \
+value will be picked from a list a different tool will produce; still use the \
+destination tool's exact parameter name. \
+user_stated=false unless the user gave the exact value THIS turn (then omit the \
+entry or set user_stated=true). \
+candidates: only fill when the valid options are a small closed set you can read \
+from the conversation/tool results — NEVER invent, pick, or rank a value. \
+relative_change: set to "increase" or "decrease" WHENEVER the user asks to adjust a \
+numeric value up or down without naming a specific target — "increase X a bit", \
+"turn X up", "X higher", "lower X by one", "a bit more/less" all qualify. Leave it \
+null otherwise. Never compute the resulting number — code derives it from the \
+current reading.
 
 # Prohibitions
 - Never list a tool name that is not literally in the catalog.

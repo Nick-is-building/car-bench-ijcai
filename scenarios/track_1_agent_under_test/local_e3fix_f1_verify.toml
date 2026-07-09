@@ -1,0 +1,27 @@
+# Auftrag E3-FIX, Phase F1 — Verifikationslauf v2 (OI-018 + Intake-Prompt-Schärfung).
+# Ziele:
+#   - disambiguation_18: set_fan_speed level = current(0)+1 (relative), FEET aus Präferenz.
+#   - disambiguation_24: fastest-route-Selektion (min duration_hours) statt Rückfrage.
+# Regression-Kontrolle:
+#   - disambiguation_0 (Schiebedach 50 % aus Präferenz, internal). Muss >=2/3 bleiben
+#     (Baseline im Abnahme-Lauf D). Prompt-Schärfung darf die bestehende Auflösung
+#     nicht regressen.
+# 3 Tasks x 3 Trials = 9 Runs.
+# Run: AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/e3fix_f1_agent.log \
+#      uv run car-bench-run scenarios/track_1_agent_under_test/local_e3fix_f1_verify.toml
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_18", "disambiguation_24"]
+seed = 10
+max_steps = 50

@@ -1778,3 +1778,48 @@ Quelle → Kaskade fragt wie bisher). Unit-Suite grün (198 passed, 2 = OI-010 v
 **Risiko/Offen:** Beide Fixes setzen voraus, dass INTAKE den Slot unter dem exakten Schema-
 Argumentnamen flaggt (`route_id_leading_to_new_destination` bzw. `set_fan_speed.level` mit
 `relative_change`). Der Verifikationslauf zeigt, ob der reale INTAKE das leistet.
+
+---
+
+## Auftrag E3-FIX · Phase F1 · Rerun v2 — Intake-Prompt geschärft (OI-018)
+
+**Datum:** 2026-07-09  **Stufe:** 6  **Bezug:** OI-018, Rerun `20260709-215011` (1/6).
+
+**Belege aus Rerun-1 (`20260709-215011__…`):**
+- dis_18 T2 = 1.0 (Fix voll durchgelaufen: `set_fan_speed(level=1.0)` + `set_fan_airflow_direction(FEET)`).
+- dis_24 T0: `r_actions=1.0`, `r_tool_subset=1.0`, `route_id_leading_to_new_destination=rll_boc_ham_564928` (= GT).
+  Reward-Fail nur durch `policy_llm_errors` (Toll-Route nicht angekündigt, OI-012-Klasse, separates
+  Response-Layer-Thema, NICHT F1-Scope).
+- Alle 4 Rest-Fails (dis_18 T0/T1, dis_24 T1/T2) enden mit exakt derselben Fallback-Frage
+  `"Could you tell me the exact value you'd like me to use?"` aus `disambiguation.py:227` →
+  `_derive_slot_value` returned None, Kaskade fällt auf Priorität 5 (ask).
+
+**Root Cause der 4 Rest-Fails (Intake-Stochastik, nicht Kaskade):**
+- dis_18 T0/T1: Intake setzt `relative_change` nicht auf `"increase"` trotz "increase the fan
+  speed a bit" → `_apply_relative` returned None (Guard `if direction not in ("increase",
+  "decrease"): return None`).
+- dis_24 T1/T2: Intake flaggt den Slot vermutlich unter einem Natürlichsprach-Namen (etwa
+  "route" / "route_option") statt dem Schema-Namen `route_id_leading_to_new_destination` →
+  `_SELECTION_RULES` matcht die (tool, arg)-Kombination nicht. dis_24 T0 zeigt: sobald Intake
+  im Folge-Turn nachschärft, greift der Fix.
+
+**Hypothese Rerun v2 (vor Lauf):** eine PRÄZISERE Intake-Prompt-Formulierung — kein Eingriff
+in `is_ambiguous` oder die value_ambiguities-Semantik, nur schärfere Formulierung der Feldregeln:
+- tool + argument MUSS der EXAKTE Schema-Parametername sein (verbietet Paraphrasen
+  wie "route" für "route_id_leading_to_new_destination" explizit, generisches Muster
+  "foo_bar_baz" als Beispiel);
+- `relative_change` mit WHENEVER-Trigger (statt ONLY) und mehr Sprach-Beispielen
+  ("increase X a bit", "turn X up", "lower X by one", "a bit more/less").
+
+**Erwartung Rerun v2 (9 Trials = dis_0 + dis_18 + dis_24, je 3):**
+- dis_18 → 2-3/3 (relative_change greift zuverlässiger).
+- dis_24 → 1-3/3 (Schema-arg konsistent geflaggt; dis_24 T0-Fall reproduzierbar oder
+  mit besserem Intake schneller). Der Toll-Route-Info-Fail (OI-012) bleibt orthogonal —
+  eine T0-artige Konstellation kann dennoch am Response-Layer scheitern.
+- **Regression-Kontrolle dis_0** (Schiebedach 50 % aus Präferenz, internal): MUSS ≥ 2/3
+  bleiben (Baseline aus Abnahme-Lauf D). Prompt-Schärfung darf bestehende Auflösung
+  nicht regressen.
+
+**Risiko:** Prompt-Änderungen sind stochastisch schwer voll auszuschließen; Regression-
+Kontrolle dis_0 fängt einen Regress-Fall (base 1a-Cascade). Falls dis_0 < 2/3 → Rollback
+zur alten Prompt-Version, Fix als "greift wenn Intake konsistent" akzeptieren.
