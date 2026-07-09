@@ -1655,3 +1655,98 @@ auf betroffenen Tasks re-verifizieren, nicht voll wiederholen.
 
 **Zusätzlich erhoben:** Schicht-Telemetrie aus `_local/runs/e2_agent.log` (welche Kaskaden-Schicht
 entschied final, Eskalationen, Ehrlichkeits-Senke), Pass^1/Pass^3/Pass@3 pro Dimension GETRENNT.
+
+---
+
+## 2026-07-09 — AUFTRAG E, Phase E2: Voller Dev-Lauf — Ergebnis
+
+**Lauf:** 20260709-032822 (nach VM-Crash-Recovery neu gestartet — verifiziert 0 Cost aus
+Vor-Crash-Versuch via /proc-Log-Recovery). Config: `local_e2_dev.toml`, 20 Tasks/Split × 3 Trials,
+seed 10, train, Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash. 180 Task-Runs. Runtime 10163 s
+(~2h49m). Rohdaten: `docs/experiments/2026-07-09-e2-dev-lauf.json`.
+
+**Kosten: $23.11 gesamt** (Base $8.46, Hall $5.30, Dis $9.36, User-Sim $0.16). Leicht über der
+$20-Schätzung — Anthropic-Caching-Wirkung geringer als angenommen, im Rahmen der freigegebenen
+Größenordnung.
+
+**Pass^k pro Dimension (Pflichtformat):**
+- **Base:** Pass^1 = 80.0 %, Pass^3 = **75.0 %** (15/20 Tasks 3/3). n=20 Tasks/3 Trials.
+- **Hallucination:** Pass^1 = 80.0 %, Pass^3 = **70.0 %** (14/20). n=20/3.
+- **Disambiguation:** Pass^1 = 45.0 %, Pass^3 = **30.0 %** (6/20). n=20/3.
+- **Gesamt:** Pass^1 = 68.3 %, Pass^3 = **58.3 %** (35/60 Tasks 3/3), Pass@3 = 76.7 % (46/60 ≥1/3).
+
+**Hypothese vs. Realität:**
+- Base 65-80 % erwartet → 75 % **✅ Hypothese getroffen**.
+- Hallucination 70-90 % erwartet → 70 % **✅ am unteren Rand der Hypothese**.
+- Disambiguation 45-70 % erwartet → 30 % **❌ deutlich unter Hypothese** — die schwächste
+  Dimension bleibt strukturelle Baustelle (Kaskade greift auf neuen Enums/Zonen nicht wie erhofft).
+
+**PAPER-KERN-METRIK — deterministischer AUT-Kern: `policy_aut_errors = 0 / 180 Trials`.**
+Kumuliert über alle Läufe: **0 / 240 Trials** (60 aus 4× Stufe-4 + 180 aus E2). Alle Fails aus
+LLM-getragenen Pfaden (policy_llm_errors: 10/180 trials) oder Action-/Tool-Subset-Fails —
+kein einziger deterministischer AUT-Policy-Verstoß. Das ist die zentrale Aussage der Arbeit.
+
+**Schicht-Telemetrie (aus `_local/runs/e2_agent.log`, 5708 JSON-Events, 180 Trials):**
+
+FabricationGuard (Stufe 5):
+- C2 (Numerik-Provenienz): 14 BLOCKs (numerischer Wert nicht im Ledger)
+- C3 (Bindungs-Prüfung LLM): 37 Events
+- C4 (Einstimmigkeit): 19 Events
+- C5 (sanitize): 17 Claim-Ersetzungen (unsupported claim replaced)
+
+Stufe 3 PLAN-GUARD (OI-011 Fuzzy):
+- 85 Events gesamt
+- 36× fuzzy match found → Re-Plan **(Refusal verhindert — Netto-Save von OI-011-Härtung)**
+- 31× genuine missing capability → korrektes Refusal
+- 18× fuzzy re-plans exhausted → Refusal
+
+Stufe 6 DisambiguationEngine:
+- 179 Events (in fast jedem Trial ≥1×)
+- 23× **resolved silently** (deterministische Kaskade greift)
+- 138× user clarification required
+- 18× **resolver slot name not in tool schema, skipped** (C1-Fix aus OI-016 aktiv gegen Schema-Fremd-Injektion)
+
+OI-017 Enum-Gate (Stufe Execution): 12 Deterministic-Pre-Flight-Firings.
+
+**Fehler-Vor-Klassifikation (Rohmaterial für E3):**
+
+Base fails (5 Tasks):
+- base_10 (0/3): policy_llm_error LLM-POL:008 fog lights + weather — **OI-007-Datenlücke** (nur
+  Sunroof-Wetter-Regel bestückt, Fog-Lights-Wetter-Regel nicht) — bekannt.
+- base_30 (1/3): T2 policy_llm_error LLM-POL:004 REQUIRES_CONFIRMATION `set_head_lights_high_beams` —
+  **OI-007-Datenlücke** (LLM-POL:004 als weitere Daten-Zeile nachziehbar) — bekannt.
+- base_2 (0/3): OUT_OF_SCOPE, MISSING=[open_close_trunk_door] — **NEUES Muster**: Refusal auf
+  Trunk-Door-Tool. Prüfen in E3: ist das Tool im A2A-Katalog?
+- base_28 (0/3): OUT_OF_SCOPE, MISSING=[set_fan_airflow_direction, set_fan_speed] — **NEUES Muster**:
+  Fan-Tools-Refusal. Wiederholt sich in dis_28/dis_34.
+- base_32 (0/3): gemischt (OUT_OF_SCOPE, actions=0). E3-Verdacht: Fan-Speed/Defrost verwechselt.
+
+Hallucination fails (6 Tasks, 10 Fail-Trials):
+- HALLUCINATION_ERROR (hall_16/28/36 T0/T1, hall_16 T2): FabricationGuard erkennt neue Fabrication-
+  Typen nicht → **OI-014-Klasse-Erweiterung** — E3 prüfen, welcher Typ (Result-Feld-Entzug vs.
+  Neu-Erfindung vs. Paraphrase-Umgehung).
+- OUT_OF_SCOPE (hall_10 T1, hall_30/32/36 mehrere): valider Hallucination-Task refusiert →
+  Fuzzy-Gate exhausted (siehe Telemetrie 18 exhausted).
+
+Disambiguation fails (14 Tasks — Hauptbaustelle):
+- **DISAMBIGUATION_ERROR** (dis_0 T1, dis_8 3/3, dis_18 3/3, dis_24 T0, dis_36 T2): Agent fragt statt
+  intern zu lösen → **OI-016-Klasse-Erweiterung** auf weitere Enum/Value-Domänen (fog_lights,
+  fan_airflow_direction, nav-Ziele, Telefon).
+- **OUT_OF_SCOPE** (dis_16 T0, dis_28 3/3, dis_34 3/3, dis_36 T1, dis_38 T2): Refusal statt Auflösung.
+- **actions/tool_sub=0 ohne End-Keyword** (dis_12, dis_16 T2, dis_20 T0, dis_22, dis_32 T2): falsche
+  Aktion ausgeführt — verdient Trace-Diagnose in E3.
+- **policy_llm_error**:
+  - dis_20 T1/T2: LLM-POL:004/007 REQUIRES_CONFIRMATION high_beams (OI-007-Datenlücke, bekannt).
+  - dis_26 T0/T2: LLM-POL:022 fastest route + Alternative-Frage (**OI-012-Klasse**, bekannt).
+  - dis_38 T0/T1: LLM-POL:012 Zonen-Temperatur-Differenz > 3 °C nicht mitgeteilt (**OI-008-Klasse**, bekannt).
+
+**Baseline-Vergleich (Public Opus 4.6, aus claims.md):** Pass^3 Base 0.58 / Hall 0.80 / Dis 0.48 /
+Overall 0.46. Unser Sonnet-4-6: **Base 0.75 (>Baseline) / Hall 0.70 (<Opus) / Dis 0.30 (<Opus) /
+Overall 0.58 (>Baseline)**. Sonnet-Modell schwächer als Opus-Baseline, aber Overall dennoch besser
+dank deterministischer Struktur. Base-Vorteil klar; Hall/Dis darunter — Hall wegen neuer Fabrication-
+Klassen, Dis wegen struktureller Kaskaden-Lücken auf ungesehenen Enum/Value-Domänen.
+
+**Nächster Schritt:** E3 Fehler-Taxonomie (Trace-Analyse pro Fail-Klasse, neue OIs anlegen).
+Reine Analyse-Arbeit, kein LLM-Cost. Zwei zu erwartende NEUE OI-Klassen:
+- Trunk-Door / Fan-Tools OUT_OF_SCOPE-Pattern (Katalog-/Intake-Lücke?)
+- Erweiterung OI-016 auf weitere Value-/Enum-Domänen (fog_lights, fan_direction, nav-Ziele).
