@@ -1823,3 +1823,20 @@ in `is_ambiguous` oder die value_ambiguities-Semantik, nur schärfere Formulieru
 **Risiko:** Prompt-Änderungen sind stochastisch schwer voll auszuschließen; Regression-
 Kontrolle dis_0 fängt einen Regress-Fall (base 1a-Cascade). Falls dis_0 < 2/3 → Rollback
 zur alten Prompt-Version, Fix als "greift wenn Intake konsistent" akzeptieren.
+
+---
+
+## Auftrag F1b · Rerun v2 — Verifikation der Intake-Prompt-Schärfung
+
+**Datum:** 2026-07-09  **Stufe:** 6  **Bezug:** OI-018, F1b
+
+**Setup:** `local_e3fix_f1_verify.toml`, 3 Tasks × 3 Trials = 9 Runs, seed 10,
+Agent anthropic/claude-sonnet-4-6, Judge/User gemini-2.5-flash. Kostenschätzung
+$1.50–$2.50, Freigabe erteilt.
+
+**Hypothese (vor Lauf):**
+- **dis_0** (Regression-Kontrolle, Schiebedach 50 % aus Präferenz): ≥ 2/3 (Baseline D-Abnahme 2/3).
+- **dis_18** (Fan-Speed relative +1): ≥ 2/3 (vorher 1/3; geschärfter relative_change-Trigger).
+- **dis_24** (Fastest-Route-Selektion): ≥ 1/3 (vorher 0/3 reward, T0 hatte korrekte Actions
+  aber OI-012-Policy-Fail; geschärfter Schema-Argname-Trigger).
+Falls dis_0 < 2/3 → Rollback Intake-Prompt, Fix als "greift wenn Intake konsistent" akzeptieren.
