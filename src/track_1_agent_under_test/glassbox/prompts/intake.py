@@ -1,6 +1,8 @@
 """INTAKE state — extract structured intent from the user's message. Stufe 2."""
 from __future__ import annotations
 
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 from .. import llm
@@ -22,6 +24,9 @@ class ValueAmbiguity(BaseModel):
     argument: str                   # argument name on that tool (from its schema)
     user_stated: bool = False       # did the user explicitly give this value this turn?
     candidates: list[str] = Field(default_factory=list)  # known valid options, if a closed set
+    # Set only for an up/down adjustment with no target value ("increase a bit");
+    # code derives the resulting number from the current value. NEVER guess it here.
+    relative_change: Optional[Literal["increase", "decrease"]] = None
 
 
 class Intent(BaseModel):
@@ -79,7 +84,11 @@ sunroof" gives no percentage). Set tool + argument to the exact catalog names an
 user_stated=false. If the user DID state the value, set user_stated=true (or omit the \
 entry). candidates: only fill when the valid options are a small closed set you can \
 read from the conversation/tool results — NEVER invent, pick, or rank a value. The \
-value itself is decided later by deterministic code, not here.
+value itself is decided later by deterministic code, not here. \
+relative_change: set to "increase" or "decrease" ONLY when the user asks to move a \
+numeric value up or down without naming a target ("turn the fan up a bit", "lower it \
+by one"); leave null otherwise. Never compute the resulting number — code derives it \
+from the current reading.
 
 # Prohibitions
 - Never list a tool name that is not literally in the catalog.

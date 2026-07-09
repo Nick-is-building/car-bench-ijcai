@@ -26,6 +26,7 @@ im Call-Argument (Value-Flow-Garantie) — nie dem Planner-LLM ueberlassen.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -61,6 +62,53 @@ _TOOL_PREF_CATEGORY: dict[str, tuple[str, str]] = {
 # listed here — that keeps the blast radius tiny.
 _TOOL_PREF_VALUE_ARG: dict[str, str] = {
     "set_ambient_lights": "lightcolor",
+}
+
+
+# --- ledger-derived value rules (Prioritaet 4: Kontext ergibt genau einen Wert) ---
+# Some value slots cannot be filled by a preference/default/candidate list: the
+# value must be DERIVED from an earlier tool result already in the ledger. Two
+# families, both Lesson 1a (the LLM only flags that a value is missing; code
+# computes it from ledger data via a documented rule — never invents it):
+#   selection — pick the objective-best id from a prior result list;
+#   relative  — a current reading +/- one step for an up/down adjustment.
+# Keyed by (tool, schema-argument), like the maps above: the tool name is
+# configuration of a generic mechanism, not a hardcoded task answer.
+
+@dataclass(frozen=True)
+class _SelectionRule:
+    source_tool: str            # ledger tool whose result holds the candidates
+    collection: str             # key under result holding the list ("" → result IS the list)
+    id_field: str               # field on each candidate to inject
+    minimize: str               # numeric field to minimize (objective criterion)
+    tie_break: str | None = None  # secondary numeric field to minimize on ties
+
+
+@dataclass(frozen=True)
+class _RelativeRule:
+    source_tool: str            # ledger tool whose result holds the current value
+    current_field: str          # field on that result carrying the current value
+    step: int = 1               # magnitude of one adjustment step
+
+
+# (tool, argument) → objective selection from a prior result list.
+_SELECTION_RULES: dict[tuple[str, str], _SelectionRule] = {
+    # Replacing the final destination needs a route id; the documented heuristic
+    # for multi-stop navigation is "fastest route" → min duration, ties by distance.
+    ("navigation_replace_final_destination", "route_id_leading_to_new_destination"):
+        _SelectionRule(
+            source_tool="get_routes_from_start_to_destination",
+            collection="routes",
+            id_field="route_id",
+            minimize="duration_hours",
+            tie_break="distance_km",
+        ),
+}
+
+# (tool, argument) → current reading +/- one step (direction from INTAKE).
+_RELATIVE_VALUE_RULES: dict[tuple[str, str], _RelativeRule] = {
+    ("set_fan_speed", "level"):
+        _RelativeRule(source_tool="get_climate_settings", current_field="fan_speed", step=1),
 }
 
 
@@ -219,6 +267,25 @@ class DisambiguationEngine:
             new_args = dict(call.arguments)
             for slot in slots:
                 arg = slot["argument"]
+                # Priority 4 (ledger-derived): a rule computes the value from an
+                # earlier tool result. Runs BEFORE the pref/heuristic cascade so a
+                # fastest-route / relative-step slot resolves silently instead of
+                # falling through to a spurious clarification question.
+                derived = self._derive_slot_value(ctx, call, slot, index)
+                if derived is not None:
+                    if index.has_tool(call.tool) and not index.has_parameter(call.tool, arg):
+                        _log.info(
+                            "Disambiguation: derived slot name not in tool schema, skipped",
+                            tool=call.tool, argument=arg,
+                        )
+                    else:
+                        new_args[arg] = derived
+                        resolved.append((call.tool, arg, derived))
+                        _log.info(
+                            "Disambiguation: resolved by ledger-derived rule",
+                            tool=call.tool, argument=arg, value=derived,
+                        )
+                    continue
                 pref = extractor(ctx, call.tool, arg) if prefs_available else None
                 heuristic = _HEURISTIC_DEFAULTS.get((call.tool, arg))
                 question = (
@@ -291,6 +358,84 @@ class DisambiguationEngine:
         if not triggering:
             return None
         return self._preference_request_for(triggering)
+
+    # --- ledger-derived value rules (Prioritaet 4) ---
+
+    def _derive_slot_value(self, ctx, call, slot: dict, index):
+        """Compute a slot value from an earlier ledger result, or None.
+
+        Table-driven (no branching on tool names): a (tool, argument) either has
+        a selection or a relative rule, or it does not. Returns the already-typed
+        value ready to inject; None means no rule matched or the source data is
+        absent (then the normal cascade decides, incl. asking).
+        """
+        arg = slot.get("argument")
+        sel = _SELECTION_RULES.get((call.tool, arg))
+        if sel is not None:
+            return self._select_by_minimum(ctx, sel)
+        rel = _RELATIVE_VALUE_RULES.get((call.tool, arg))
+        if rel is not None:
+            return self._apply_relative(
+                ctx, rel, slot.get("relative_change"), index, call.tool, arg)
+        return None
+
+    def _select_by_minimum(self, ctx, rule: "_SelectionRule"):
+        result = self._latest_result(ctx, rule.source_tool)
+        items = (result.get(rule.collection)
+                 if isinstance(result, dict) and rule.collection else result)
+        if not isinstance(items, list):
+            return None
+        cands = [
+            it for it in items
+            if isinstance(it, dict) and rule.id_field in it
+            and isinstance(it.get(rule.minimize), (int, float))
+            and not isinstance(it.get(rule.minimize), bool)
+        ]
+        if not cands:
+            return None
+
+        def _key(it):
+            secondary = it.get(rule.tie_break) if rule.tie_break else 0
+            return (it[rule.minimize],
+                    secondary if isinstance(secondary, (int, float)) else 0)
+
+        return min(cands, key=_key)[rule.id_field]
+
+    def _apply_relative(self, ctx, rule: "_RelativeRule", direction, index, tool, arg):
+        if direction not in ("increase", "decrease"):
+            return None
+        result = self._latest_result(ctx, rule.source_tool)
+        if not isinstance(result, dict):
+            return None
+        current = result.get(rule.current_field)
+        if not isinstance(current, (int, float)) or isinstance(current, bool):
+            return None
+        step = rule.step if direction == "increase" else -rule.step
+        value = int(current) + step
+        low, high = self._numeric_bounds(index, tool, arg)
+        if isinstance(low, (int, float)):
+            value = max(value, int(low))
+        if isinstance(high, (int, float)):
+            value = min(value, int(high))
+        return value
+
+    def _latest_result(self, ctx, tool_name: str):
+        """Most recent SUCCESS result payload for a tool from the ledger, or None."""
+        for raw in reversed(ctx.ledger.get_tool_results(tool_name)):
+            try:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+            except (ValueError, TypeError):
+                continue
+            if isinstance(data, dict) and data.get("status") == "SUCCESS":
+                return data.get("result")
+        return None
+
+    def _numeric_bounds(self, index, tool: str, arg: str):
+        cap = index.get_tool(tool)
+        spec = cap.parameters.get(arg) if cap else None
+        if not isinstance(spec, dict):
+            return None, None
+        return spec.get("minimum"), spec.get("maximum")
 
     # --- helpers ---
 

@@ -515,5 +515,167 @@ class GatherWiringTest(unittest.TestCase):
         self.assertTrue(ctx.preferences_gathered)
 
 
+# ---------------------------------------------------------------------------
+# Ledger-derived value rules — selection (fastest route) + relative (fan +1)
+# ---------------------------------------------------------------------------
+
+from track_1_agent_under_test.glassbox.disambiguation import (  # noqa: E402
+    _SELECTION_RULES,
+    _SelectionRule,
+)
+
+NAV_SCHEMA = [
+    {"function": {
+        "name": "navigation_replace_final_destination",
+        "description": "Replace the final destination.",
+        "parameters": {
+            "properties": {
+                "new_destination_id": {"type": "string"},
+                "route_id_leading_to_new_destination": {"type": "string"},
+            },
+            "required": ["new_destination_id", "route_id_leading_to_new_destination"],
+        },
+    }},
+]
+
+FAN_SCHEMA = [
+    {"function": {
+        "name": "set_fan_speed",
+        "description": "Set the fan speed level.",
+        "parameters": {
+            "properties": {"level": {"type": "integer", "minimum": 0, "maximum": 5}},
+            "required": ["level"],
+        },
+    }},
+]
+
+
+def _ledger_ctx(tools, tool_results):
+    """TurnContext whose ledger holds the given (tool_name, result_dict) pairs."""
+    ledger = Ledger()
+    ledger.add_system("You are a car assistant.")
+    ledger.add_user_turn("Change something, please.")
+    for i, (name, result) in enumerate(tool_results):
+        ledger.add_tool_result(
+            name, json.dumps({"status": "SUCCESS", "result": result}), f"call_{i}")
+    ctx = TurnContext(ledger=ledger, tools=tools, model="fake")
+    return ctx
+
+
+class SelectionRuleTest(unittest.TestCase):
+    """dis_24 shape: the route id is DERIVED from the routes tool result by the
+    documented 'fastest route' heuristic — never invented, never asked."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+        self.routes = {"routes": [
+            {"route_id": "rll_slow", "duration_hours": 9.0, "distance_km": 700.0},
+            {"route_id": "rll_fast", "duration_hours": 7.5, "distance_km": 820.0},
+            {"route_id": "rll_mid", "duration_hours": 8.0, "distance_km": 640.0},
+        ]}
+
+    def test_selection_picks_fastest_route(self):
+        ctx = _ledger_ctx(NAV_SCHEMA,
+                          [("get_routes_from_start_to_destination", self.routes)])
+        ctx.intent = {"is_state_changing": True, "value_ambiguities": [_amb(
+            tool="navigation_replace_final_destination",
+            argument="route_id_leading_to_new_destination")]}
+        call = PlannedCall(
+            tool="navigation_replace_final_destination",
+            arguments={"new_destination_id": "loc_x", "route_id_leading_to_new_destination": "PLACEHOLDER"},
+            call_id="c1")
+        out = self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(len(out.calls), 1)
+        self.assertEqual(
+            out.calls[0].arguments["route_id_leading_to_new_destination"], "rll_fast")
+        self.assertEqual(out.calls[0].arguments["new_destination_id"], "loc_x")  # untouched
+        self.assertEqual(out.question, "")  # never asks
+
+    def test_tie_break_prefers_shorter_distance(self):
+        ties = {"routes": [
+            {"route_id": "rll_long", "duration_hours": 7.5, "distance_km": 900.0},
+            {"route_id": "rll_short", "duration_hours": 7.5, "distance_km": 500.0},
+        ]}
+        val = self.eng._select_by_minimum(
+            _ledger_ctx([], [("get_routes_from_start_to_destination", ties)]),
+            _SELECTION_RULES[("navigation_replace_final_destination",
+                              "route_id_leading_to_new_destination")])
+        self.assertEqual(val, "rll_short")
+
+    def test_no_source_result_falls_through_to_ask(self):
+        # Null-FP: routes tool never ran → derive returns nothing → normal cascade
+        # asks (state-changing) rather than inventing a route.
+        ctx = _ledger_ctx(NAV_SCHEMA, [])
+        ctx.intent = {"is_state_changing": True,
+                      "clarification_question": "Which route?",
+                      "value_ambiguities": [_amb(
+                          tool="navigation_replace_final_destination",
+                          argument="route_id_leading_to_new_destination")]}
+        call = PlannedCall(
+            tool="navigation_replace_final_destination",
+            arguments={"new_destination_id": "loc_x", "route_id_leading_to_new_destination": "?"},
+            call_id="c1")
+        out = self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.question, "Which route?")
+        self.assertEqual(out.calls, [])
+
+    def test_mechanism_is_table_driven_not_hardcoded(self):
+        # The selection logic branches on the RULE, not on any tool/domain name:
+        # a synthetic rule over synthetic data resolves the same way, proving no
+        # per-task answer is baked into the code.
+        ctx = _ledger_ctx([], [("some_search_tool", {"items": [
+            {"widget_id": "w_big", "price": 30},
+            {"widget_id": "w_cheap", "price": 10},
+        ]})])
+        rule = _SelectionRule(source_tool="some_search_tool", collection="items",
+                              id_field="widget_id", minimize="price")
+        self.assertEqual(self.eng._select_by_minimum(ctx, rule), "w_cheap")
+
+
+class RelativeRuleTest(unittest.TestCase):
+    """dis_18 shape: 'increase the fan speed a bit' → current(0)+1, read from the
+    climate settings result and clamped to the schema bounds."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+
+    def _run(self, current, direction):
+        ctx = _ledger_ctx(FAN_SCHEMA,
+                          [("get_climate_settings", {"fan_speed": current})])
+        slot = {"tool": "set_fan_speed", "argument": "level",
+                "user_stated": False, "relative_change": direction}
+        ctx.intent = {"is_state_changing": True, "value_ambiguities": [slot]}
+        call = PlannedCall(tool="set_fan_speed", arguments={"level": 0}, call_id="c1")
+        return self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+
+    def test_increase_from_current(self):
+        out = self._run(0, "increase")
+        self.assertEqual(out.calls[0].arguments["level"], 1)
+        self.assertEqual(out.question, "")
+
+    def test_decrease_from_current(self):
+        out = self._run(3, "decrease")
+        self.assertEqual(out.calls[0].arguments["level"], 2)
+
+    def test_clamped_to_max(self):
+        out = self._run(5, "increase")
+        self.assertEqual(out.calls[0].arguments["level"], 5)
+
+    def test_clamped_to_min(self):
+        out = self._run(0, "decrease")
+        self.assertEqual(out.calls[0].arguments["level"], 0)
+
+    def test_no_relative_change_falls_through_to_ask(self):
+        # Null-FP: without a relative_change flag the derive stays silent and the
+        # state-changing slot asks — code never guesses a level.
+        ctx = _ledger_ctx(FAN_SCHEMA, [("get_climate_settings", {"fan_speed": 0})])
+        ctx.intent = {"is_state_changing": True, "clarification_question": "What level?",
+                      "value_ambiguities": [_amb(tool="set_fan_speed", argument="level")]}
+        call = PlannedCall(tool="set_fan_speed", arguments={"level": 0}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.question, "What level?")
+        self.assertEqual(out.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

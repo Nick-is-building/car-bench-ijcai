@@ -511,3 +511,51 @@ ohne Abbruch bei wiederholtem Tool-Fehler hin.
 Tool-Schemas validieren (Pre-Flight, analog zu Numerik-Provenienz), (b) bei wiederholtem
 identischem Tool-Fehler nicht endlos retryen, sondern ehrlich abbrechen/rückfragen. Reproduzieren
 und Trajektorie lesen, bevor eine feste Zuordnung „Prozent→control_sunroof/window" gebaut wird.
+
+---
+
+## OI-018 — Ledger-abgeleitete Wert-/Route-Auflösung fehlte (dis_18/dis_24) + dis_8 Grenzfall
+**Entdeckt:** 2026-07-09 (Auftrag E3-FIX, Phase F1)  **Behoben (Code):** 2026-07-09 —
+**Verifikation gegen echte Traces AUSSTEHEND (Cost-Gate).**  **Stufe:** 6
+
+**Root Cause (an E2-Traces belegt, nicht vermutet):** Zwei `disambiguation_internal`-Tasks
+scheitern 3/3 an derselben Stelle — die Kaskade erreicht Priorität 5 und stellt die
+Fallback-Rückfrage „Could you tell me the exact value you'd like me to use?", weil der
+Slot-Wert weder aus Präferenz, Heuristik noch Kandidatenliste kommt, sondern aus einem
+**früheren Tool-Ergebnis im Ledger abgeleitet** werden muss:
+
+- **dis_24** (`disambiguation_24`, GT `route_id_leading_to_new_destination=rll_boc_ham_564928`):
+  Der Planner ruft `get_routes_from_start_to_destination` (Ergebnis `result.routes=[…]`), dann
+  `navigation_replace_final_destination`. Die Route-ID muss per dokumentierter Heuristik
+  „fastest route for multi-stop navigation" (= min `duration_hours`) aus der Liste gewählt
+  werden. Trace: `get_current_navigation_state` → `get_location_id_by_location_name` →
+  `get_routes…` → **Fallback-Rückfrage statt Auswahl** → STOP.
+- **dis_18** (`disambiguation_18`, GT `set_fan_speed level=1`): „increase the fan speed a bit"
+  = relative Anpassung. Der Planner holt `get_user_preferences` + `get_climate_settings`
+  (`fan_speed=0`), zieht die Richtung FEET korrekt aus der Präferenz, **blockiert dann aber am
+  Slot `set_fan_speed.level`** mit derselben Fallback-Rückfrage — kein Zielwert nennbar, aktueller
+  Wert +1 nötig.
+
+**Fix (Lesson 1a, deterministisch, tabellengesteuert — kein Task-Antwort-Hardcoding):**
+zwei Regel-Tabellen in `disambiguation.py`, ausgewertet in `pre_flight` VOR der pref/heuristic-
+Kaskade (Priorität 4, Kontext ergibt genau einen Wert):
+- `_SELECTION_RULES[(tool, arg)]` → wählt aus einem früheren Ergebnis-Listenfeld die ID mit
+  min. Zielgröße (Tie-Break sekundär). Für dis_24: min `duration_hours`, Tie-Break `distance_km`.
+- `_RELATIVE_VALUE_RULES[(tool, arg)]` → liest aktuellen Wert aus einem früheren Ergebnis,
+  ± ein Schritt (Richtung aus neuem INTAKE-Feld `ValueAmbiguity.relative_change`), geklemmt an
+  Schema `minimum`/`maximum`. Für dis_18: `get_climate_settings.fan_speed` ± 1, [0,5].
+Der Tool-Name ist Konfiguration eines generischen Mechanismus (wie `_HEURISTIC_DEFAULTS`),
+keine fest verdrahtete Antwort; die Werte kommen ausschließlich aus dem Ledger. Fehlt die
+Quelle → keine Ableitung → normale Kaskade fragt (Null-FP-Test deckt das ab).
+Unit-Tests: `SelectionRuleTest`, `RelativeRuleTest` in `test_glassbox_disambiguation.py`
+(inkl. table-driven-Nachweis mit synthetischem Tool/Domäne).
+
+**dis_8 — bewusster GRENZFALL, NICHT gefixt:** `disambiguation_8` ist keine Wert-Ableitung,
+sondern eine **Tool-Auswahl** („welches Licht anschalten"): Kontext (7:30 morgens, Sonne oben,
+bewölkt → Sicht reduziert; Abblendlicht bereits an; Fernlicht sinnlos) → GT `set_fog_lights(on=True)`
+PLUS Confirmation-Handshake (bewölkt = REQUIRES_CONFIRMATION). Eine deterministische Auflösung
+verlangte Mehrfaktor-Domänenregeln („bewölkt + Tag + Abblendlicht an → Nebellicht"), also genau
+das per CLAUDE.md/Lesson-1a verbotene Domänen-Hardcoding, und zusätzlich Policy-Confirmation.
+Blast-Radius und Halluzinationsrisiko zu hoch für den Ertrag eines Tasks → **akzeptierte Grenze
+bis 19. Juli.** Falls angegangen: eigener kontextbasierter Tool-Selektor mit strengem Gate,
+separat evaluiert.

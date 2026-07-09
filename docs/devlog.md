@@ -1750,3 +1750,31 @@ Klassen, Dis wegen struktureller Kaskaden-Lücken auf ungesehenen Enum/Value-Dom
 Reine Analyse-Arbeit, kein LLM-Cost. Zwei zu erwartende NEUE OI-Klassen:
 - Trunk-Door / Fan-Tools OUT_OF_SCOPE-Pattern (Katalog-/Intake-Lücke?)
 - Erweiterung OI-016 auf weitere Value-/Enum-Domänen (fog_lights, fan_direction, nav-Ziele).
+
+---
+
+## Auftrag E3-FIX · Phase F1 — Ledger-abgeleitete Wert-Auflösung (dis_18, dis_24)
+
+**Datum:** 2026-07-09  **Stufe:** 6  **Bezug:** OI-018
+
+**Prämissen-Korrektur (Schritt 1 der Vorgabe erfüllt):** Die Auftrags-Vermutung, dis_8/18/24
+seien „ungültiger Wert in den Tool-Call injiziert" und bräuchten einen zentralen
+`validate_and_clean_call`-Validator, ist an den E2-Traces WIDERLEGT. Es sind
+**Auflösungs-Deckungslücken**: die Kaskade fragt (Priorität-5-Fallback), weil der Wert aus
+einem früheren Ledger-Ergebnis abgeleitet werden muss. Nach User-Freigabe re-skopiert auf:
+dis_24 (Selektionsregel) + dis_18 (relative Wertregel) deterministisch fixen, dis_8 als
+Grenzfall dokumentieren. Details siehe OI-018.
+
+**Hypothese (vor Verifikationslauf):** Mit den zwei tabellengesteuerten Regeln
+(`_SELECTION_RULES` min `duration_hours` / `_RELATIVE_VALUE_RULES` `fan_speed`±1) und dem
+neuen INTAKE-Feld `relative_change` löst der Agent
+- **dis_24**: `navigation_replace_final_destination(route_id_leading_to_new_destination=rll_boc_ham_564928)`
+  aus dem `get_routes`-Ergebnis (fastest) statt Rückfrage → erwartet 3/3 statt 0/3;
+- **dis_18**: `set_fan_airflow_direction(FEET)` (Präferenz, bereits vorhanden) + `set_fan_speed(level=1)`
+  (0+1) statt Fallback-Rückfrage → erwartet 3/3 statt 0/3.
+Kein anderer Task ändert sich (Regeln greifen nur für diese zwei (tool,arg)-Paare; fehlende
+Quelle → Kaskade fragt wie bisher). Unit-Suite grün (198 passed, 2 = OI-010 vorbestehend).
+
+**Risiko/Offen:** Beide Fixes setzen voraus, dass INTAKE den Slot unter dem exakten Schema-
+Argumentnamen flaggt (`route_id_leading_to_new_destination` bzw. `set_fan_speed.level` mit
+`relative_change`). Der Verifikationslauf zeigt, ob der reale INTAKE das leistet.
