@@ -596,7 +596,7 @@ class StateMachine:
     # --- terminal paths ---
 
     def _verify_and_respond(self, ctx: TurnContext) -> Action:
-        from .guard import FabricationGuard, GuardResult
+        from .guard import FabricationGuard, GuardResult, inject_unknown_caveat
         from .auditor import Auditor
         from . import prompts
 
@@ -619,6 +619,8 @@ class StateMachine:
             layer="FabricationGuard.C5",
             reason="draft modified" if safe != audit.safe_text else "draft clean",
         ))
+
+        safe = inject_unknown_caveat(safe, ctx.ledger, ctx.executed_signatures)
 
         ctx.transition(State.RESPOND)
         final = prompts.respond.finalize(safe, ctx)

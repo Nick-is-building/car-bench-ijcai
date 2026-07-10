@@ -198,6 +198,80 @@ def _tool_entity_synonyms(tool_name: str) -> list[str]:
     return [p for p in parts if p not in _COMMON_VERBS and len(p) > 2]
 
 
+def _collect_unknown_fields(ledger: Ledger) -> dict[str, list[str]]:
+    """Return {tool_name: [field_names]} for SUCCESS results containing 'unknown' values."""
+    import json as _json
+
+    result: dict[str, list[str]] = {}
+    for e in ledger.entries:
+        if e.kind != "tool_result" or not e.tool_name:
+            continue
+        text = e.content if isinstance(e.content, str) else None
+        if text is None:
+            continue
+        try:
+            data = _json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict) or str(data.get("status", "")).upper() != "SUCCESS":
+            continue
+        res = data.get("result", {})
+        if isinstance(res, dict):
+            unknowns = [k for k, v in res.items() if v == "unknown"]
+            if unknowns:
+                result[e.tool_name] = unknowns
+    return result
+
+
+_UNCERTAINTY_WORDS = frozenset({
+    "unknown", "unavailable", "not available", "currently unavailable",
+})
+
+
+def inject_unknown_caveat(
+    draft: str,
+    ledger: Ledger,
+    executed_sigs: set[str],
+) -> str:
+    """Lesson 1a gate: if executed actions relate to unknown-valued fields, ensure uncertainty is mentioned."""
+    unknown_by_tool = _collect_unknown_fields(ledger)
+    if not unknown_by_tool:
+        return draft
+
+    if not executed_sigs:
+        return draft
+
+    executed_tools = {sig.split(":")[0] for sig in executed_sigs}
+
+    exec_entities: set[str] = set()
+    for t in executed_tools:
+        exec_entities.update(_tool_entity_synonyms(t))
+
+    lower_draft = draft.lower()
+    missing_labels: list[str] = []
+
+    for tool_name, fields in unknown_by_tool.items():
+        tool_entities = set(_tool_entity_synonyms(tool_name))
+        if not (tool_entities & exec_entities):
+            continue
+        field_labels = [f.replace("_", " ") for f in fields]
+        already_covered = any(
+            fl in lower_draft and any(w in lower_draft for w in _UNCERTAINTY_WORDS)
+            for fl in field_labels
+        )
+        if already_covered:
+            continue
+        missing_labels.extend(field_labels)
+
+    if not missing_labels:
+        return draft
+
+    labels = " and ".join(dict.fromkeys(missing_labels))
+    caveat = f"Note: the {labels} is currently unavailable."
+    _log.info("inject_unknown_caveat: appending caveat", labels=labels)
+    return draft.rstrip() + " " + caveat
+
+
 def _ledger_text_corpus(ledger: Ledger) -> str:
     """All user messages and tool results as one searchable string."""
     parts: list[str] = []

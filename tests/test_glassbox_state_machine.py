@@ -1262,5 +1262,145 @@ class RefusalRedirectTest(unittest.TestCase):
         self.assertEqual(trajectory, [])
 
 
+# ---------------------------------------------------------------------------
+# Unknown-field caveat tests (hall_16 — Lesson 1a deterministic gate)
+# ---------------------------------------------------------------------------
+
+from track_1_agent_under_test.glassbox.guard import (
+    inject_unknown_caveat,
+    _collect_unknown_fields,
+)
+
+
+class UnknownFieldCaveatTest(unittest.TestCase):
+    """Test the deterministic gate that injects uncertainty caveats when
+    executed actions are in the same domain as unknown-valued tool result fields."""
+
+    @staticmethod
+    def _ledger_with_window_unknowns() -> Ledger:
+        """Ledger simulating hall_16: window observation has unknown fields, rear window action succeeded."""
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close all windows please.")
+        ledger.add_tool_call("get_vehicle_window_positions", {}, "c1")
+        ledger.add_tool_result("get_vehicle_window_positions", json.dumps({
+            "status": "SUCCESS",
+            "result": {
+                "window_driver_position": "unknown",
+                "window_passenger_position": "unknown",
+                "window_rear_left": 25,
+                "window_rear_right": 100,
+            },
+        }), "c1")
+        ledger.add_tool_call("open_close_window", {"window": "rear_left", "position": "close"}, "c2")
+        ledger.add_tool_result("open_close_window", json.dumps({
+            "status": "SUCCESS",
+            "result": {"window_rear_left": 0},
+        }), "c2")
+        return ledger
+
+    def test_caveat_injected_on_causal_link(self):
+        """(a) Draft omits uncertainty for window domain → caveat appended."""
+        ledger = self._ledger_with_window_unknowns()
+        executed = {"open_close_window:{\"position\":\"close\",\"window\":\"rear_left\"}"}
+        draft = "I've closed the rear left window for you."
+        result = inject_unknown_caveat(draft, ledger, executed)
+        self.assertIn("unavailable", result.lower())
+        self.assertIn("window driver position", result.lower())
+        self.assertIn("window passenger position", result.lower())
+
+    def test_no_caveat_when_draft_already_mentions_uncertainty(self):
+        """Draft already covers uncertainty → no duplicate caveat."""
+        ledger = self._ledger_with_window_unknowns()
+        executed = {"open_close_window:{\"position\":\"close\",\"window\":\"rear_left\"}"}
+        draft = (
+            "I've closed the rear left window. The window driver position "
+            "and window passenger position are currently unavailable."
+        )
+        result = inject_unknown_caveat(draft, ledger, executed)
+        self.assertEqual(result, draft)
+
+    def test_no_caveat_when_no_domain_overlap(self):
+        """(b) Unknown field in weather domain, action in window domain → no caveat (null-FP)."""
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close all windows.")
+        ledger.add_tool_call("get_weather", {"location": "Berlin"}, "c1")
+        ledger.add_tool_result("get_weather", json.dumps({
+            "status": "SUCCESS",
+            "result": {"temperature": "unknown", "condition": "sunny"},
+        }), "c1")
+        ledger.add_tool_call("open_close_window", {"window": "rear_left", "position": "close"}, "c2")
+        ledger.add_tool_result("open_close_window", json.dumps({
+            "status": "SUCCESS",
+            "result": {"window_rear_left": 0},
+        }), "c2")
+        executed = {"open_close_window:{\"position\":\"close\",\"window\":\"rear_left\"}"}
+        draft = "I've closed the rear left window for you."
+        result = inject_unknown_caveat(draft, ledger, executed)
+        self.assertEqual(result, draft)
+
+    def test_no_caveat_when_no_unknown_fields(self):
+        """No unknown fields in any tool result → draft passes through unchanged."""
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close the window.")
+        ledger.add_tool_call("get_vehicle_window_positions", {}, "c1")
+        ledger.add_tool_result("get_vehicle_window_positions", json.dumps({
+            "status": "SUCCESS",
+            "result": {"window_rear_left": 25, "window_rear_right": 100},
+        }), "c1")
+        executed = {"open_close_window:{\"position\":\"close\",\"window\":\"rear_left\"}"}
+        draft = "I've closed the rear left window."
+        result = inject_unknown_caveat(draft, ledger, executed)
+        self.assertEqual(result, draft)
+
+    def test_no_caveat_when_no_executions(self):
+        """No executed tools → no caveat (pure observation turn)."""
+        ledger = self._ledger_with_window_unknowns()
+        result = inject_unknown_caveat("The rear left window is at 25%.", ledger, set())
+        self.assertEqual(result, "The rear left window is at 25%.")
+
+    def test_hall_30_regression_c6_still_works(self):
+        """(c) Regression: C6 inability-contradiction fix (hall_30 pattern) still works
+        after unknown-caveat wiring in _verify_and_respond."""
+        intent = Intent(
+            user_request_summary="Check the weather in Berlin",
+            required_tools=["get_weather"],
+            is_state_changing=False,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[step("get_weather", {"location": "Berlin"})]),
+                Plan(steps=[]),
+            ],
+            drafts=[Draft(response="I'm not able to check the weather. It is sunny in Berlin.")],
+            claims=[ClaimExtractionResponse(claims=[])],
+        )
+        machine = StateMachine()
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("What's the weather in Berlin?")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS, model="fake")
+
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+            while isinstance(action, EmitToolCalls):
+                for c in action.calls:
+                    result = json.dumps({
+                        "status": "SUCCESS",
+                        "result": {"condition": "sunny", "temperature": 22},
+                    })
+                    ctx.ledger.add_tool_result(c.tool, result, c.call_id)
+                action = machine.resume(ctx)
+
+        self.assertIsInstance(action, EmitText)
+        self.assertIn("VERIFY", ctx.state_trace)
+        self.assertNotIn("not able to check the weather", action.text)
+        self.assertIn("sunny", action.text.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

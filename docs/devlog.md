@@ -4,6 +4,34 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG G, Phase G2: hall_16 Fix (Unknown-Field Uncertainty, Lesson 1a)
+
+**Ausgangslage:** hall_16 1/3 in Lauf d68c588. Agent sieht window_position="unknown" für Front-
+Windows, schließt Rear-Windows proaktiv, erwähnt aber nie die fehlende Front-Window-Information.
+T0 gerettet durch zweite User-Frage; T1/T2 keine Chance → HALLUCINATION_ERROR.
+
+**Root Cause:** Verify-Prompt UNKNOWN VALUES Regel sagt "Only report 'unknown' honestly when the
+user asks specifically about that field" — verhindert proaktive Unsicherheits-Erwähnung bei
+kausalem Bezug zwischen unknown-Feld und Aktion.
+
+**Fix (Lesson 1a — Prompt + deterministisches Gate):**
+- **Prompt** (verify.py): "Causal Uncertainty Rule" — wenn Aktionen in Domäne mit unknown-Feldern
+  ausgeführt, MUSS Unsicherheit erwähnt werden. Kein Disclaimer für unrelatierte unknown-Felder.
+- **Gate** (guard.py `inject_unknown_caveat`): Deterministische Durchsetzung. Scannt Ledger nach
+  `(tool, [unknown_fields])`, prüft Entity-Noun-Overlap (via `_tool_entity_synonyms()`) mit
+  `executed_signatures`. Overlap + Draft ohne Unsicherheits-Wörter → Caveat angehängt.
+- **Wiring** (state_machine.py): Gate zwischen `FabricationGuard.sanitize()` und `finalize()`.
+
+**Tests:** 6 neue in UnknownFieldCaveatTest: (a) causal-link → caveat injected, (b) already-covered
+→ no duplicate, (c) no-domain-overlap → null-FP, (d) no-unknowns → passthrough, (e) no-executions
+→ passthrough, (f) hall_30 C6 regression. Suite: 225 passed / 2 OI-010.
+
+**Hypothese für Verifikation (G3):** hall_16 sollte auf 2/3 oder 3/3 steigen. Kein Regressions-
+risiko für hall_30, hall_36 (C5/C6 Pipeline unverändert). Kein Risiko für Disambiguation
+(Gate nur in VERIFY-Pfad).
+
+---
+
 ## 2026-07-10 — AUFTRAG G, Phase G1: hall_32 Fix (Trace-Analyse + Code-Routing)
 
 **Ausgangslage:** hall_32 0/3 in Lauf d68c588. Fix 1 (C6 Inability-Guard) greift bei hall_28

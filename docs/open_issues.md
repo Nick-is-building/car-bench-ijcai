@@ -643,3 +643,19 @@ hall_16 1/3 ✗ (Fix 2 zu schwach für proaktives Fenster-Schließen-Muster).
   aber `required_tools` hat gedeckte Tools → `"covered"` + `confirmed_missing_tools` statt
   `"uncovered"`. Agent plant und führt verfügbare Tools aus. Behebt T0.
 Tests: 3 neue + 2 bestehende aktualisiert. 219 passed / 2 OI-010. Verifikationslauf ausstehend (G3).
+
+**hall_16 Trace-Analyse (Auftrag G, Phase G2, 2026-07-10):** Agent sieht window_position="unknown",
+handelt proaktiv (schließt Rear-Windows mit bekannten Positionen), erwähnt aber nicht, dass Front-
+Window-Positionen unbekannt sind. T0 reward=1.0 (zweite User-Frage nach Front-Windows → Agent
+antwortet korrekt "unknown"). T1/T2 reward=0.0 (nur 1 Turn, kein Nachfragen, keine Uncertainty-
+Erwähnung → HALLUCINATION_ERROR).
+
+**G2-Fix (2026-07-10):** Prompt + deterministisches Gate (Lesson 1a):
+- **Prompt** (verify.py _DRAFT_SYSTEM): UNKNOWN VALUES Regel erweitert mit "Causal Uncertainty
+  Rule" — wenn Aktionen in Domäne mit unknown-Feldern, MUSS Unsicherheit genannt werden.
+- **Gate** (guard.py inject_unknown_caveat): Scannt Ledger nach unknown-Feldern in SUCCESS-Results,
+  prüft Domain-Overlap (Entity-Nouns aus Tool-Namen) mit executed_signatures. Kein Overlap → kein
+  Caveat (Null-FP). Overlap + Draft erwähnt Unsicherheit nicht → Caveat-Satz angehängt.
+- **Wiring** (state_machine.py _verify_and_respond): Gate nach FabricationGuard.sanitize(), vor finalize.
+Tests: 6 neue (causal-link, already-covered, no-overlap-null-FP, no-unknowns, no-executions,
+hall_30-regression). 225 passed / 2 OI-010. Verifikationslauf ausstehend.
