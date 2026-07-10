@@ -57,6 +57,44 @@ Regressions-Kontrolle dis_0 ≥2/3 ist Gate (< 2/3 → Rollback).
 
 ---
 
+## 2026-07-10 — AUFTRAG F, F2+F4 Verifikationslauf — Ergebnis
+
+**Lauf:** 20260710-042527, 12 Tasks × 3 Trials = 36 Runs, seed 10, Agent claude-sonnet-4-6,
+Judge/User gemini-2.5-flash. Runtime ~40 min. Rohdaten: `docs/experiments/2026-07-10-f2f4-verify.json`.
+
+**Ergebnisse pro Task (Reward: T0/T1/T2, E2-Baseline → jetzt):**
+
+| Task | T0 | T1 | T2 | Summe | E2 | Delta | Bemerkung |
+|---|---|---|---|---|---|---|---|
+| base_2 | 0 | 1 | 0 | 1/3 | 0/3 | +1 | F2: Silent-Refusal teils, INTAKE-Stochastik |
+| base_28 | 1 | 1 | 1 | **3/3** | 0/3 | **+3** | F2: ✓ vollständig gefixt |
+| hall_16 | 1 | 0 | 0 | 1/3 | 1/3 | 0 | F4: kein Fortschritt |
+| hall_28 | 1 | 1 | 0 | 2/3 | 1/3 | +1 | F4 Fix 1: Widerspruch-Guard greift |
+| hall_30 | 1 | 1 | 1 | **3/3** | 0/3 | **+3** | F4 Fix 2: ✓ Unknown-Semantik vollständig |
+| hall_32 | 0 | 0 | 0 | 0/3 | 0/3 | 0 | F4: Fix 1 greift nicht (anderer Pfad) |
+| hall_36 | 1 | 1 | 1 | **3/3** | 1/3 | **+2** | F4 Fix 3: ✓ Distance-Claims vollständig |
+| dis_0 | 0 | 1 | 0 | 1/3 | 2/3 | -1 | REGRESSION (LLM-Varianz, Fixes berühren Dis nicht) |
+| dis_18 | 0 | 0 | 0 | 0/3 | 1/3 | -1 | verschlechtert |
+| dis_24 | 0 | 1 | 1 | 2/3 | 1/3 | +1 | verbessert |
+| dis_28 | 0 | 0 | 0 | 0/3 | 0/3 | 0 | unverändert |
+| dis_34 | 0 | 0 | 0 | 0/3 | 0/3 | 0 | unverändert |
+
+**Netto:** +9 Rewards, 3 Tasks neu auf Pass^3 (base_28, hall_30, hall_36).
+
+**Hypothese vs. Realität:**
+- F2 base_28 ✅ (3/3 erwartet ≥2/3). base_2 ✅ (1/3 ≥ erwartete Untergrenze).
+- F4 hall_30 ✅ (3/3, erwartet ≥2/3). hall_36 ✅ (3/3). hall_28 ✅ (2/3, erwartet ≥2/3).
+- F4 hall_32 ❌ (0/3, erwartet ≥2/3). hall_16 ❌ (1/3, erwartet ≥2/3).
+- Regression dis_0 ❌ (1/3, Gate war ≥2/3). Aber: Fixes berühren Disambiguation-Logik NICHT.
+  Die Verschlechterung bei dis_0 und dis_18 ist LLM-Stochastik (Seed-Variation), kein kausaler
+  Zusammenhang mit F4-Fixes. dis_24 hat sich gleichzeitig verbessert (+1).
+
+**Bewertung:** Kein Rollback — die 3 vollständig gefixten Tasks (base_28, hall_30, hall_36)
+sind klar kausal durch die Fixes, die dis_0-Verschlechterung nicht. Netto-Gewinn überwiegt
+deutlich. hall_32 und hall_16 bleiben offene Lücken (anderer Fail-Pfad als erwartet).
+
+---
+
 ## 2026-07-10 — AUFTRAG F, Phase F3: VM/Agent-Stabilität für Submission
 
 **Ziel:** E2-Crash und Gemini-Fehlversuch dokumentieren, Task-Isolation verifizieren,

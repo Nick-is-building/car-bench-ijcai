@@ -565,7 +565,8 @@ separat evaluiert.
 
 ## OI-019 — Silent Refusal: Planner ignoriert verfügbare Tools (base_2, base_28, dis_28, dis_34)
 **Entdeckt:** 2026-07-09 (Auftrag E2, Fail-Vor-Klassifikation)  **Behoben (Code):** 2026-07-10
-**Verifikation AUSSTEHEND (Cost-Gate).**  **Stufe:** PLAN-Loop  **Priorität:** hoch
+**Verifikation: TEILERFOLG** (Lauf 20260710-042527). base_28 3/3 ✓, base_2 1/3 (INTAKE-Stoch.).
+**Stufe:** PLAN-Loop  **Priorität:** hoch
 
 **Root Cause (E2-Agent-Log verifiziert):** Der Planner gibt `steps=[]` zurück OHNE
 `capability_missing=True` zu setzen, obwohl die benötigten Tools (`open_close_trunk_door`,
@@ -593,7 +594,7 @@ die verfügbaren Tools explizit benennt.
 
 ## OI-020 — Hallucination-Konsistenz: False-Refusal + Unknown-Blockade + Distance-Fabrication
 **Entdeckt:** 2026-07-10 (Auftrag F, F4-Analyse)  **Behoben (Code):** 2026-07-10
-**Verifikation AUSSTEHEND (Cost-Gate, kombinierter F2+F4-Lauf).**  **Stufe:** Guard/Prompt
+**Verifikation: TEILERFOLG** (Lauf 20260710-042527).  **Stufe:** Guard/Prompt
 **Priorität:** hoch
 
 **Root Causes (E2-Traces verifiziert, 6 Tasks, 3 Kategorien):**
@@ -622,3 +623,8 @@ Digits prüft.
 
 **Tests:** `test_glassbox_f4_hallucination.py` (15): C6-Inability (5), SuccessfulTools (2),
 Sanitize-Integration (2), RelativeDistance (6). Alle grün.
+
+**Verifikation (Lauf 20260710-042527):** hall_30 3/3 ✓ (Fix 2), hall_36 3/3 ✓ (Fix 3),
+hall_28 2/3 ✓ (Fix 1). hall_32 0/3 ✗ (Fix 1 greift nicht — anderer Fail-Pfad, vermutlich
+CAPABILITY_CHECK→RESPOND ohne PLAN/EXECUTE, Entity-Match greift nicht weil kein erfolgreicher
+Call im Ledger). hall_16 1/3 ✗ (Fix 2 zu schwach für proaktives Fenster-Schließen-Muster).
