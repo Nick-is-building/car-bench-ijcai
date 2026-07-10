@@ -679,6 +679,12 @@ class StateMachine:
         return self._finish(ctx, question)
 
     def _respond_refusal(self, ctx: TurnContext) -> Action:
+        if ctx.executed_signatures:
+            # Work was done before hitting the missing capability.  Route
+            # through VERIFY → Auditor → sanitize/C6 so the response
+            # reflects what succeeded and C6 catches false inability claims.
+            return self._verify_and_respond(ctx)
+
         from . import prompts
 
         ctx.transition(State.RESPOND)

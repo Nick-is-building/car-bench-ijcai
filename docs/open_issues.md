@@ -625,6 +625,21 @@ Digits prüft.
 Sanitize-Integration (2), RelativeDistance (6). Alle grün.
 
 **Verifikation (Lauf 20260710-042527):** hall_30 3/3 ✓ (Fix 2), hall_36 3/3 ✓ (Fix 3),
-hall_28 2/3 ✓ (Fix 1). hall_32 0/3 ✗ (Fix 1 greift nicht — anderer Fail-Pfad, vermutlich
-CAPABILITY_CHECK→RESPOND ohne PLAN/EXECUTE, Entity-Match greift nicht weil kein erfolgreicher
-Call im Ledger). hall_16 1/3 ✗ (Fix 2 zu schwach für proaktives Fenster-Schließen-Muster).
+hall_28 2/3 ✓ (Fix 1). hall_32 0/3 ✗ (Fix 1 greift nicht — anderer Fail-Pfad, siehe unten).
+hall_16 1/3 ✗ (Fix 2 zu schwach für proaktives Fenster-Schließen-Muster).
+
+**hall_32 Trace-Analyse (Auftrag G1, 2026-07-10):** Zwei separate Root Causes identifiziert:
+- **T0:** `INTAKE → CAPABILITY_CHECK → RESPOND` — kein PLAN/EXECUTE. `check()` retourniert
+  `"uncovered"` weil `required_but_missing_tools` ein Tool enthält, obwohl `required_tools`
+  gedeckte Tools hat. Sofortrefusal ohne Tool-Versuch.
+- **T1/T2:** `...EXECUTE → PLAN → POLICY_CHECK → RESPOND` — Agent führt `open_close_window`
+  erfolgreich aus, dann scheitert die zweite Plan-Runde (removed tool). `_respond_refusal()`
+  erzeugt LLM-Refusal OHNE sanitize/C6 → falsche Inability-Claims für bereits erledigte Tools.
+
+**G1-Fix (2026-07-10):** Zwei Code-Routing-Fixes (kein Prompt-Change):
+- **Fix G1-1:** `_respond_refusal()` (state_machine.py): wenn `ctx.executed_signatures`
+  nicht leer → redirect zu `_verify_and_respond()` → VERIFY + Auditor + sanitize/C6. Behebt T1/T2.
+- **Fix G1-2:** `CapabilityMatcher.check()` (capability.py): wenn `actually_missing` nicht leer
+  aber `required_tools` hat gedeckte Tools → `"covered"` + `confirmed_missing_tools` statt
+  `"uncovered"`. Agent plant und führt verfügbare Tools aus. Behebt T0.
+Tests: 3 neue + 2 bestehende aktualisiert. 219 passed / 2 OI-010. Verifikationslauf ausstehend (G3).

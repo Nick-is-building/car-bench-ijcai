@@ -4,6 +4,40 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG G, Phase G1: hall_32 Fix (Trace-Analyse + Code-Routing)
+
+**Ausgangslage:** hall_32 0/3 in Lauf d68c588. Fix 1 (C6 Inability-Guard) greift bei hall_28
+(2/3) aber nicht bei hall_32. Auftrag: Trace-Analyse, Root Cause, Fix.
+
+**Trace-Analyse (3 Trials, Lauf 20260710-042527):**
+- **T0** (`ctx:642cc608`): `INTAKE → CAPABILITY_CHECK → RESPOND → DONE`. Null Tool-Calls.
+  `check()` retourniert `"uncovered"` weil `required_but_missing_tools` (set_fan_speed) existiert,
+  obwohl `required_tools` (open_close_window etc.) gedeckt sind. Sofortrefusal.
+- **T1** (`ctx:efeb4849`): `...PLAN → EXECUTE → PLAN → POLICY_CHECK → RESPOND`. Agent führt
+  open_close_window+get_climate_settings erfolgreich aus. Zweite Plan-Runde: Planner versucht
+  set_fan_speed (removed) → `_respond_refusal()` → LLM-Refusal OHNE sanitize/C6 → false claim
+  "not able to control windows". End: HALLUCINATION_ERROR.
+- **T2** (`ctx:32ab2951`): Identisch mit T1.
+
+**Vergleich hall_28 (2/3):** T0/T1 reward=1.0 — Agent handelt KORREKT (führt set_fan_airflow_direction
+aus, sagt ehrlich dass set_fan_speed fehlt). C6 muss nicht eingreifen.
+
+**Root Causes (verifiziert):**
+1. `_respond_refusal()` ist ein blinder Endpfad ohne sanitize/C6. Wenn nach erfolgreicher
+   Tool-Execution aufgerufen, produziert das LLM falsche Pauschal-Refusals.
+2. `CapabilityMatcher.check()` behandelt partial coverage als total uncovered.
+
+**Zwei Code-Routing-Fixes (kein Prompt-Change):**
+- **Fix G1-1** (state_machine.py:681): `_respond_refusal()` prüft `ctx.executed_signatures`.
+  Nicht leer → redirect zu `_verify_and_respond()` → VERIFY + Auditor + sanitize/C6.
+- **Fix G1-2** (capability.py:129): Wenn `actually_missing` nicht leer aber `required_tools`
+  hat ≥1 gedecktes Tool → `"covered"` + `confirmed_missing_tools`. Nur wenn NICHTS gedeckt → `"uncovered"`.
+
+**Tests:** 3 neue (refusal-redirect nach VERIFY, partial-missing → covered, all-missing → uncovered),
+2 bestehende aktualisiert. Suite: 219 passed / 2 OI-010. Verifikationslauf mit G3 gebündelt.
+
+---
+
 ## 2026-07-10 — AUFTRAG F, Phase F4: Hallucination-Hardening — Fixes + Hypothese (VOR dem Lauf)
 
 **Ausgangslage:** E2 Pass^3 Hallucination = 70% (14/20). 6 Tasks scheitern. Fail-Analyse

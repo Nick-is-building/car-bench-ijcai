@@ -127,7 +127,16 @@ class CapabilityMatcher:
             if not self.index.has_tool(t)
         ]
         if actually_missing:
-            return "uncovered"
+            # Partial coverage: if required_tools has at least one tool that
+            # IS in the catalog, proceed — the plan-execute loop will skip the
+            # missing tool via check_step, and VERIFY/sanitize/C6 will produce
+            # an honest response that acknowledges what was done and what can't
+            # be done.  Only refuse when NOTHING is available.
+            required = intent.get("required_tools", [])
+            has_any_covered = any(self.index.has_tool(t) for t in required)
+            if not has_any_covered:
+                return "uncovered"
+            intent["confirmed_missing_tools"] = actually_missing
 
         # Tools the plan will actively call — must all be in the index
         for tool_name in intent.get("required_tools", []):

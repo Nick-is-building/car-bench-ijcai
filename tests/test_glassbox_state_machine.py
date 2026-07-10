@@ -169,11 +169,23 @@ class CapabilityMatcherTest(unittest.TestCase):
         }
         self.assertEqual(m.check(intent), "covered")
 
-    def test_uncovered_required_but_missing_tool(self):
-        """required_but_missing_tools set → uncovered even if required_tools all exist."""
+    def test_partial_missing_returns_covered_with_confirmed_missing(self):
+        """required_but_missing_tools set but required_tools has covered tool → covered."""
         m = CapabilityMatcher(TOOLS_NO_SUNSHADE)  # sunshade absent from catalog
         intent = {
             "required_tools": ["open_close_sunroof"],
+            "required_params": [],
+            "required_but_missing_tools": ["open_close_sunshade"],
+            "is_ambiguous": False,
+        }
+        self.assertEqual(m.check(intent), "covered")
+        self.assertEqual(intent["confirmed_missing_tools"], ["open_close_sunshade"])
+
+    def test_all_missing_returns_uncovered(self):
+        """required_but_missing_tools set and no covered required_tools → uncovered."""
+        m = CapabilityMatcher(TOOLS_NO_SUNSHADE)
+        intent = {
+            "required_tools": [],
             "required_params": [],
             "required_but_missing_tools": ["open_close_sunshade"],
             "is_ambiguous": False,
@@ -217,23 +229,28 @@ class CapabilityCheckIntegrationTest(unittest.TestCase):
         self.assertIn("CAPABILITY_CHECK", ctx.state_trace)
         self.assertNotIn("PLAN", ctx.state_trace)
 
-    def test_intake_missing_but_required_tool_yields_llm_refusal(self):
-        """required_but_missing_tools non-empty → CAPABILITY_CHECK → refusal."""
+    def test_partial_missing_proceeds_to_plan(self):
+        """required_but_missing_tools with covered required_tools → PLAN, not refusal."""
         fake = FakeLLM(
             intents=[Intent(
-                user_request_summary="Open the sunroof",
-                required_tools=["open_close_sunroof"],
-                required_but_missing_tools=["open_close_sunshade"],
-                is_state_changing=True,
+                user_request_summary="Check the weather",
+                required_tools=["get_weather"],
+                required_but_missing_tools=["set_fan_speed"],
+                is_state_changing=False,
                 is_ambiguous=False,
             )],
-            refusals=[FAKE_REFUSAL],
+            plans=[
+                Plan(steps=[step("get_weather", {"location": "Berlin"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
         )
-        ctx, trajectory, action = run_scripted(fake, tools=TOOLS_NO_SUNSHADE)
-        self.assertEqual(trajectory, [])
+        ctx, trajectory, action = run_scripted(fake)
         self.assertIsInstance(action, EmitText)
-        self.assertEqual(action.text, FAKE_REFUSAL.response)
-        self.assertEqual(ctx.capability_result, "uncovered")
+        self.assertEqual(ctx.capability_result, "covered")
+        self.assertIn("PLAN", ctx.state_trace)
+        executed = [c[0] for batch in trajectory for c in batch]
+        self.assertIn("get_weather", executed)
 
     def test_planner_capability_missing_signal_yields_refusal(self):
         """Verified claim (named tool truly absent) → refusal."""
@@ -560,7 +577,8 @@ class MidConversationToolRemovalTest(unittest.TestCase):
 
         Flow: run_turn emits get_weather call (succeeds). Before resume, caller
         removes open_close_sunroof from ctx.tools. Planner then requests
-        open_close_sunroof → check_step sees it as uncovered → refusal.
+        open_close_sunroof → check_step sees it as uncovered → would refusal,
+        but Fix 1 redirects to VERIFY because work was already done.
         """
         machine = StateMachine()
         fake = FakeLLM(
@@ -569,7 +587,8 @@ class MidConversationToolRemovalTest(unittest.TestCase):
                 Plan(steps=[step("get_weather", {"location": "here"})]),
                 Plan(steps=[step("open_close_sunroof", {"position": "open"})]),
             ],
-            refusals=[FAKE_REFUSAL],
+            drafts=[FAKE_DRAFT],
+            claims=[ClaimExtractionResponse(claims=[])],
         )
         ledger = Ledger()
         ledger.add_system("You are a car assistant.")
@@ -583,9 +602,9 @@ class MidConversationToolRemovalTest(unittest.TestCase):
             # Simulate evaluator withdrawing open_close_sunroof before resume
             ctx.tools = TOOLS_NO_SUNROOF
             action = machine.resume(ctx)
-        # Planner wanted open_close_sunroof but it's gone from updated index → refusal
+        # Tool removed mid-turn but work was done → goes through VERIFY, not raw refusal
         self.assertIsInstance(action, EmitText)
-        self.assertEqual(action.text, FAKE_REFUSAL.response)
+        self.assertIn("VERIFY", ctx.state_trace)
 
 
 # ---------------------------------------------------------------------------
@@ -1163,6 +1182,83 @@ class SilentRefusalGuardTest(unittest.TestCase):
         )
         ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
         self.assertTrue(ctx.silent_refusal_replan)
+        self.assertEqual(trajectory, [])
+
+
+class RefusalRedirectTest(unittest.TestCase):
+    """G1 Fix 1: _respond_refusal with executed_signatures → VERIFY/sanitize/C6."""
+
+    def test_refusal_after_execution_goes_through_verify(self):
+        """Agent executes tools, then planner uses a missing tool → VERIFY, not refusal.
+
+        This is the hall_32 T1/T2 pattern: the agent got weather successfully,
+        but the second plan round tries a removed tool. The response must go
+        through VERIFY → sanitize/C6 so false inability claims get caught.
+        """
+        intent = Intent(
+            user_request_summary="Get weather and adjust fan",
+            required_tools=["get_weather"],
+            is_state_changing=False,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[step("get_weather", {"location": "Berlin"})]),
+                # second round: planner tries removed tool (filtered by check_step)
+                Plan(steps=[step("set_fan_speed", {"level": 2})]),
+            ],
+            drafts=[Draft(
+                claims=[],
+                response=(
+                    "I'm sorry, but I'm not able to check the weather "
+                    "in this vehicle. You'll need to check manually."
+                ),
+            )],
+            claims=[ClaimExtractionResponse(claims=[])],
+        )
+        machine = StateMachine()
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Get weather and adjust fan.")
+        ctx = TurnContext(ledger=ledger, tools=TOOLS, model="fake")
+        trajectory = []
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+            while isinstance(action, EmitToolCalls):
+                trajectory.append([(c.tool, c.arguments, c.call_id) for c in action.calls])
+                for c in action.calls:
+                    result = json.dumps({
+                        "status": "SUCCESS",
+                        "result": {"weather": "sunny"},
+                    })
+                    ctx.ledger.add_tool_result(c.tool, result, c.call_id)
+                action = machine.resume(ctx)
+
+        self.assertIsInstance(action, EmitText)
+        self.assertIn("VERIFY", ctx.state_trace)
+        # C6 catches the false inability claim about weather (tool succeeded)
+        self.assertNotIn("not able to check the weather", action.text)
+        executed = [c[0] for batch in trajectory for c in batch]
+        self.assertIn("get_weather", executed)
+
+    def test_refusal_without_execution_stays_refusal(self):
+        """No tools executed → _respond_refusal fires normally (honest refusal)."""
+        intent = Intent(
+            user_request_summary="Adjust the fan speed",
+            required_tools=["set_fan_speed"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[Plan(steps=[step("set_fan_speed", {"level": 2})])],
+            refusals=[FAKE_REFUSAL],
+        )
+        ctx, trajectory, action = run_scripted(fake)
+        self.assertIsInstance(action, EmitText)
+        self.assertEqual(action.text, FAKE_REFUSAL.response)
+        self.assertNotIn("VERIFY", ctx.state_trace)
         self.assertEqual(trajectory, [])
 
 
