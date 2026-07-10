@@ -133,6 +133,8 @@ class TurnContext:
     preferences_gathered: bool = False
     # Stufe 6: silently resolved (tool, arg, value) tuples — telemetry
     disambiguation_resolved: list = field(default_factory=list)
+    # F2: silent-refusal re-plan attempted (bounded to 1)
+    silent_refusal_replan: bool = False
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -304,6 +306,35 @@ class StateMachine:
                     action = self._inject_preference_gather(ctx, gather_args)
                     if action is not None:
                         return action
+                # F2: silent-refusal guard. The planner returned no steps and
+                # did not flag capability_missing, but INTAKE identified
+                # required tools that ARE in the catalog. One bounded re-plan
+                # with an explicit note — the planner may have overlooked an
+                # available tool (e.g. open_close_trunk_door).
+                if (not ctx.silent_refusal_replan
+                        and not ctx.executed_signatures
+                        and ctx.capability_rebuttals == 0):
+                    from .capability import CapabilityIndex
+                    idx = CapabilityIndex(ctx.tools)
+                    covered_required = [
+                        t for t in ctx.intent.get("required_tools", [])
+                        if idx.has_tool(t)
+                    ]
+                    if covered_required:
+                        ctx.silent_refusal_replan = True
+                        ctx.policy_notes.append(
+                            "PLAN-GUARD: you returned no tool calls, but the "
+                            "following tools ARE available in the catalog and "
+                            "were identified as required: "
+                            + ", ".join(covered_required)
+                            + ". If the user's request can be fulfilled with "
+                            "these tools, plan the necessary steps."
+                        )
+                        _log.info(
+                            "Silent-refusal guard: re-plan with available tools",
+                            covered_required=covered_required,
+                        )
+                        continue
                 break
 
             calls: list[PlannedCall] = []

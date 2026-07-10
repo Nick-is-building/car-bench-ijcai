@@ -1867,3 +1867,25 @@ bestehende Auflösung gebrochen ohne die Ziel-Tasks konsistent zu verbessern.
 - **Möglicher Ansatz (nicht mehr in F1-Scope):** Fuzzy-Matching auf Arg-Namen in
   `_derive_slot_value` (analog zum Fuzzy-Gate auf Tool-Namen). Aber: zusätzliche
   Kopplung + FP-Risiko, nicht trivial. Dokumentiert als Härtungskandidat.
+
+---
+
+## Phase F2 — Silent-Refusal-Guard (OI-019)
+
+**Datum:** 2026-07-10  **Stufe:** PLAN-Loop  **Bezug:** OI-019
+
+**Root Cause (E2-Agent-Log verifiziert, 3 gezielte Blicke):**
+base_2/base_28/dis_28/dis_34 scheitern alle 12/12 Trials mit r_actions=0.0. Alle Tools
+(`open_close_trunk_door`, `set_fan_speed`, `set_fan_airflow_direction`) sind im Katalog
+(ALL_TOOLS). Zwei Fail-Pfade:
+1. **Planner Silent Refusal** (häufiger): `build_plan` → `steps=[]`, `capability_missing=False`.
+   Kein PLAN-GUARD-Warning weil kein Flag. Code fällt durch zu VERIFY/RESPOND → Refusal.
+2. **Intake Namens-Halluzination** (seltener): INTAKE erfindet `open_trunk_door` statt
+   `open_close_trunk_door`. H-R2-Rebuttal feuert, re-extracted Intent hat weiter den
+   falschen Namen → INTAKE-Refusal.
+
+**Fix:** Silent-Refusal-Guard in `_plan_execute_loop`: bounded Re-Plan (1×) mit Note
+die verfügbare Tools benennt. Feuert nur wenn: (a) keine Steps, (b) kein capability_missing,
+(c) INTAKE required_tools im Katalog, (d) keine bisherigen Executions, (e) keine bisherigen
+Capability-Rebuttals. Deterministisch, Lesson-1a-konform. 3 Fake-Tests (inkl. Null-FP).
+Verifikationslauf ausstehend (Cost-Gate).

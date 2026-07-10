@@ -560,3 +560,31 @@ das per CLAUDE.md/Lesson-1a verbotene Domänen-Hardcoding, und zusätzlich Polic
 Blast-Radius und Halluzinationsrisiko zu hoch für den Ertrag eines Tasks → **akzeptierte Grenze
 bis 19. Juli.** Falls angegangen: eigener kontextbasierter Tool-Selektor mit strengem Gate,
 separat evaluiert.
+
+---
+
+## OI-019 — Silent Refusal: Planner ignoriert verfügbare Tools (base_2, base_28, dis_28, dis_34)
+**Entdeckt:** 2026-07-09 (Auftrag E2, Fail-Vor-Klassifikation)  **Behoben (Code):** 2026-07-10
+**Verifikation AUSSTEHEND (Cost-Gate).**  **Stufe:** PLAN-Loop  **Priorität:** hoch
+
+**Root Cause (E2-Agent-Log verifiziert):** Der Planner gibt `steps=[]` zurück OHNE
+`capability_missing=True` zu setzen, obwohl die benötigten Tools (`open_close_trunk_door`,
+`set_fan_speed`, `set_fan_airflow_direction`) im Katalog vorhanden sind. Der bestehende
+PLAN-GUARD fängt nur den Fall ab, wo der Planner explizit `capability_missing=True` meldet;
+der „stille Refusal" (keine Steps, kein Flag) fällt durch zu VERIFY/RESPOND und generiert
+eine Refusal-Antwort.
+
+**Zweiter Root Cause (Intake, stochastisch):** In manchen Trials erfindet das INTAKE-LLM
+falsche Toolnamen (`open_trunk_door` statt `open_close_trunk_door`). Fuzzy-Match (ratio 0.833
+> 0.80) hätte greifen sollen; in der Praxis fängt die H-R2-Rebuttal das korrekt ab, aber
+die RE-EXTRACTED Intent hat denselben Fehler → INTAKE-Refusal. Dieses zweite Muster ist
+LLM-Stochastik, nicht deterministisch fixbar.
+
+**Fix (Lesson 1a, deterministisch):** Silent-Refusal-Guard in `_plan_execute_loop`:
+wenn `build_plan` leere Steps liefert UND `capability_missing` NICHT gesetzt UND INTAKE
+`required_tools` hat, die im Katalog stehen UND keine Tool-Calls bisher ausgeführt UND
+keine Capability-Rebuttals versucht → ein bounded Re-Plan (max 1) mit Policy-Note, die
+die verfügbaren Tools explizit benennt.
+
+**Tests:** `SilentRefusalGuardTest` (3): (1) Re-Plan feuert + Tool wird genutzt,
+(2) kein Re-Plan wenn keine required_tools, (3) bounded auf 1 Re-Plan.

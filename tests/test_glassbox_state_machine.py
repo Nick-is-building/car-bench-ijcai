@@ -1094,5 +1094,77 @@ class LLMProviderTest(unittest.TestCase):
                 _raw_completion(model="anthropic/claude-sonnet-4-6", messages=[])
 
 
+class SilentRefusalGuardTest(unittest.TestCase):
+    """F2: planner returns empty steps without capability_missing for available tools."""
+
+    TOOLS_WITH_TRUNK = TOOLS + [{"function": {
+        "name": "open_close_trunk_door",
+        "description": "REQUIRES_CONFIRMATION, Vehicle Control: Open or close the trunk door.",
+        "parameters": {"properties": {"action": {"type": "string", "enum": ["OPEN", "CLOSE"]}},
+                       "required": ["action"]},
+    }}]
+
+    def test_silent_refusal_replans_with_available_tools(self):
+        """Planner returns empty steps but INTAKE listed a covered tool → one re-plan."""
+        intent = Intent(
+            user_request_summary="Open the trunk door",
+            required_tools=["open_close_trunk_door"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[], done_reason="cannot open trunk"),
+                Plan(steps=[step("open_close_trunk_door", {"action": "OPEN"})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
+        self.assertIsInstance(action, EmitText)
+        self.assertTrue(ctx.silent_refusal_replan)
+        self.assertTrue(any("PLAN-GUARD" in n for n in ctx.policy_notes))
+        executed = [c[0] for batch in trajectory for c in batch]
+        self.assertIn("open_close_trunk_door", executed)
+
+    def test_silent_refusal_not_triggered_when_no_required_tools(self):
+        """INTAKE listed no required_tools → empty plan is legitimate, no re-plan."""
+        intent = Intent(
+            user_request_summary="Thanks, that's all",
+            required_tools=[],
+            is_state_changing=False,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[Plan(steps=[], done_reason="nothing to do")],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
+        self.assertFalse(ctx.silent_refusal_replan)
+        self.assertEqual(trajectory, [])
+
+    def test_silent_refusal_bounded_to_one_replan(self):
+        """Re-plan fires once; second empty plan falls through to VERIFY."""
+        intent = Intent(
+            user_request_summary="Open the trunk door",
+            required_tools=["open_close_trunk_door"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[], done_reason="cannot open trunk"),
+                Plan(steps=[], done_reason="still cannot"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
+        self.assertTrue(ctx.silent_refusal_replan)
+        self.assertEqual(trajectory, [])
+
+
 if __name__ == "__main__":
     unittest.main()
