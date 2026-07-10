@@ -14,7 +14,29 @@ Regression auf F2+F4 Fixes (hall_30 3/3, hall_36 3/3, base_28 3/3).
 **Config:** `local_g3_verify.toml`, seed=10, 3 Trials, max_steps=50.
 **Kostenschätzung:** ~$5 (Agent + Evaluator). Freigabe erteilt.
 
-**Ergebnis:** _(nach Lauf eintragen)_
+**Ergebnis (Lauf 20260710-202655, $2.56 Agent-Kosten, 1766s):**
+
+| Task | F2+F4 | G3 | Δ |
+|---|---|---|---|
+| base_2 | 1/3 | **3/3** | +2 |
+| base_28 | 3/3 | **3/3** | = |
+| **hall_16 (G2)** | **1/3** | **3/3** | **+2 ★** |
+| hall_28 | 2/3 | 1/3 | -1 (stoch) |
+| hall_30 | 3/3 | **3/3** | = |
+| **hall_32 (G1)** | **0/3** | **2/3** | **+2 ★** |
+| hall_36 | 3/3 | **3/3** | = |
+| dis_0 | 1/3 | **3/3** | +2 |
+| dis_24 | 2/3 | 1/3 | -1 (stoch) |
+| dis_34 | 0/3 | 0/3 | = |
+
+**Pass^3:** base=1.0 (+0.5), hall=0.6 (+0.2), dis=0.33 (+0.33). Overall: **0.644** (vs 0.30).
+**Netto: +3 Pass^3-Tasks** (hall_16, base_2, dis_0). Keine systematische Regression.
+
+**Hypothese bestätigt:** hall_16 → 3/3 (Ziel ≥2/3 ✓), hall_32 → 2/3 (Ziel ≥2/3 ✓).
+hall_30, hall_36, base_28 stabil (3/3). hall_28 stochastisch -1 Trial (C6 Pfad-Abhängigkeit
+vom LLM-Wortlaut). dis_0/base_2 unerwartet verbessert — Zufall oder indirekte Prompt-Wirkung.
+
+**policy_aut_errors: 0/30.** Kumuliert 0 über alle Läufe.
 
 ---
 

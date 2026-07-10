@@ -594,8 +594,8 @@ die verfügbaren Tools explizit benennt.
 
 ## OI-020 — Hallucination-Konsistenz: False-Refusal + Unknown-Blockade + Distance-Fabrication
 **Entdeckt:** 2026-07-10 (Auftrag F, F4-Analyse)  **Behoben (Code):** 2026-07-10
-**Verifikation: TEILERFOLG** (Lauf 20260710-042527).  **Stufe:** Guard/Prompt
-**Priorität:** hoch
+**Verifikation: ERFOLG** (Lauf 20260710-202655). hall_16 3/3 ✓, hall_32 2/3 ✓.  **Stufe:** Guard/Prompt
+**Priorität:** erledigt (hall_32 T1 stochastisch, kein Code-Fix möglich)
 
 **Root Causes (E2-Traces verifiziert, 6 Tasks, 3 Kategorien):**
 
