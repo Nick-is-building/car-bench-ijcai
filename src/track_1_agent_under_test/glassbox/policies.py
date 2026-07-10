@@ -160,6 +160,15 @@ TOOL_EFFECTS: dict[str, Callable[[dict], dict]] = {
     "navigation_add_one_waypoint": lambda a: {"nav_waypoint_count": _INC},
     "navigation_delete_waypoint": lambda a: {"nav_waypoint_count": _DEC},
     "navigation_delete_destination": lambda a: {"nav_waypoint_count": _DEC},
+    "set_climate_temperature": lambda a: (
+        {"climate_temperature_driver": a.get("temperature"),
+         "climate_temperature_passenger": a.get("temperature")}
+        if a.get("seat_zone") == "ALL_ZONES" else
+        {"climate_temperature_driver": a.get("temperature")}
+        if a.get("seat_zone") == "DRIVER" else
+        {"climate_temperature_passenger": a.get("temperature")}
+        if a.get("seat_zone") == "PASSENGER" else {}
+    ),
 }
 
 # get-tools whose SUCCESS result payload is merged into the known state
@@ -169,6 +178,7 @@ OBSERVATION_TOOLS = frozenset({
     "get_vehicle_window_positions",
     "get_sunroof_and_sunshade_position",
     "get_current_navigation_state",
+    "get_temperature_inside_car",
 })
 
 # result field → derived state entry (for non-scalar payload fields)
@@ -331,6 +341,7 @@ class RequiresConfirmationRule:
     confirmed: Callable[[Ledger], bool]    # explicit user confirmation already present?
     question: Callable[[Ledger], str]      # the Rückfrage to emit when not yet confirmed
     when: Callable[[dict], bool] | None = None   # over call args
+    description_prefix: str | None = None  # only fire if tool desc starts with this
 
 
 def _num(v: Any) -> float | None:
@@ -453,6 +464,54 @@ def _weather_confirmation_question(action: str) -> Callable[[Ledger], str]:
     return build
 
 
+# --- OI-008: LLM-POL:012 zone temperature >3°C note helper ---
+
+def _zone_temp_note(a: dict, s: dict) -> str | None:
+    """Obligation note when single-zone temperature diff exceeds 3°C."""
+    zone = a.get("seat_zone")
+    temp = a.get("temperature")
+    if zone == "ALL_ZONES" or temp is None:
+        return None
+    if zone == "DRIVER":
+        other_key, other_label = "climate_temperature_passenger", "passenger"
+    elif zone == "PASSENGER":
+        other_key, other_label = "climate_temperature_driver", "driver"
+    else:
+        return None
+    other = s.get(other_key)
+    if other is None:
+        return None  # unknown → Null-FP
+    try:
+        diff = abs(float(temp) - float(other))
+    except (TypeError, ValueError):
+        return None
+    if diff > 3:
+        return (
+            f"LLM-POL:012: setting the {zone.lower()} zone to {temp}°C creates a "
+            f"{diff:.1f}°C difference to the {other_label} zone ({other}°C). "
+            f"You MUST inform the user about this temperature difference."
+        )
+    return None
+
+
+# --- OI-007r: LLM-POL:004 REQUIRES_CONFIRMATION helpers ---
+
+def _rc_tool_confirmed(ledger: Ledger) -> bool:
+    """User explicitly confirmed in a turn after the first user message."""
+    first_user_turn = None
+    for e in ledger.entries:
+        if e.kind == "user":
+            first_user_turn = e.turn
+            break
+    if first_user_turn is None:
+        return False
+    return any(
+        e.kind == "user" and e.turn > first_user_turn
+        and _has_affirmative(str(e.content))
+        for e in ledger.entries
+    )
+
+
 NAV_EDIT_TOOLS = frozenset({
     "navigation_add_one_waypoint",
     "navigation_delete_waypoint",
@@ -552,6 +611,14 @@ RULES: list[Any] = [
         observe_tool="get_weather",
         build_args=_weather_args,
     ),
+    # --- LLM-POL:012 — observe temperatures before single-zone temp change (OI-008) ---
+    PriorObservationRule(
+        policy_id="LLM-POL:012",
+        trigger_tool="set_climate_temperature",
+        when=lambda a: a.get("seat_zone") in ("DRIVER", "PASSENGER"),
+        observe_tool="get_temperature_inside_car",
+        build_args=lambda tc: {},
+    ),
     # --- LLM-POL:008 — adverse-weather confirmation gate (OI-007) ---
     # Weather is guaranteed known here: AUT-POL:009 (above) defers the trigger
     # until get_weather sits in the ledger. Unknown weather → condition False → pass.
@@ -570,6 +637,42 @@ RULES: list[Any] = [
         condition=_fog_weather_adverse,
         confirmed=_weather_confirmed,
         question=_weather_confirmation_question("switching on the fog lights"),
+    ),
+    # --- LLM-POL:004 — REQUIRES_CONFIRMATION tools (OI-007r) ---
+    # description_prefix gate: only fires if the runtime tool description starts
+    # with "REQUIRES_CONFIRMATION" — tools registered without the prefix pass.
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:004",
+        trigger_tool="open_close_trunk_door",
+        condition=lambda ledger: True,
+        confirmed=_rc_tool_confirmed,
+        question=lambda ledger: (
+            "I'd like to operate the trunk door for you. This action requires "
+            "your explicit confirmation before I proceed. Shall I go ahead?"
+        ),
+        description_prefix="REQUIRES_CONFIRMATION",
+    ),
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:004",
+        trigger_tool="set_head_lights_high_beams",
+        condition=lambda ledger: True,
+        confirmed=_rc_tool_confirmed,
+        question=lambda ledger: (
+            "I'd like to change the high beam headlights. This action requires "
+            "your explicit confirmation before I proceed. Shall I go ahead?"
+        ),
+        description_prefix="REQUIRES_CONFIRMATION",
+    ),
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:004",
+        trigger_tool="send_email",
+        condition=lambda ledger: True,
+        confirmed=_rc_tool_confirmed,
+        question=lambda ledger: (
+            "I'd like to send this email for you. This action requires your "
+            "explicit confirmation before I proceed. Shall I go ahead?"
+        ),
+        description_prefix="REQUIRES_CONFIRMATION",
     ),
     # --- AUT-POL:005 value aspect — sunshade must be FULLY open (100) ---
     StateCompanionRule(
@@ -686,6 +789,38 @@ RULES: list[Any] = [
             "the reply MUST warn about energy inefficiency and the action needs "
             "user confirmation."
             if (_num(a.get("percentage")) or 0) > 25 and s.get("air_conditioning") is True
+            else None
+        ),
+    ),
+    # --- LLM-POL:012 — zone temperature difference >3°C obligation note (OI-008) ---
+    ObligationNoteRule(
+        policy_id="LLM-POL:012",
+        trigger_tool="set_climate_temperature",
+        note=_zone_temp_note,
+    ),
+    # --- LLM-POL:022 — fastest route for multi-stop navigation (OI-012) ---
+    ObligationNoteRule(
+        policy_id="LLM-POL:022",
+        trigger_tool="set_new_navigation",
+        note=lambda a, s: (
+            "LLM-POL:022: you are setting up a multi-stop navigation. You MUST "
+            "explicitly inform the user that you selected the fastest route per "
+            "segment, ask if they want more information on alternative routes, "
+            "and mention toll roads on any segment that includes them."
+            if len(a.get("route_ids", [])) >= 2
+            else None
+        ),
+    ),
+    ObligationNoteRule(
+        policy_id="LLM-POL:022",
+        trigger_tool="navigation_replace_final_destination",
+        note=lambda a, s: (
+            "LLM-POL:022: you are replacing the destination on an active multi-stop "
+            "route. You MUST inform the user that you selected the fastest route "
+            "for this segment, ask if they want more information on alternative "
+            "routes, and mention toll roads if the route includes them."
+            if isinstance(s.get("nav_waypoint_count"), int)
+            and s["nav_waypoint_count"] >= 3
             else None
         ),
     ),
@@ -929,6 +1064,10 @@ def _eval_requires_confirmation(rule: RequiresConfirmationRule, env: _Env) -> No
     for call in _triggers(rule, env):
         if call not in env.result.kept:
             continue
+        if rule.description_prefix is not None:
+            cap = env.index.get_tool(call.tool)
+            if cap is None or not cap.description.startswith(rule.description_prefix):
+                continue
         if not rule.condition(env.ledger):        # precondition absent/unknown → Null-FP
             continue
         if rule.confirmed(env.ledger):            # user already said yes → proceed

@@ -526,5 +526,200 @@ class WeatherConfirmationTest(unittest.TestCase):
         self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
 
 
+# ---------------------------------------------------------------------------
+# OI-008 — LLM-POL:012 zone temperature >3°C
+# ---------------------------------------------------------------------------
+
+# Add temperature tools to the index for these tests
+_TEMP_TOOLS = TOOLS + [
+    {"function": {"name": "get_temperature_inside_car", "description": "",
+                  "parameters": {"properties": {}, "required": []}}},
+    {"function": {"name": "set_climate_temperature", "description": "",
+                  "parameters": {"properties": {
+                      "temperature": {"type": "number"},
+                      "seat_zone": {"type": "string",
+                                    "enum": ["ALL_ZONES", "DRIVER", "PASSENGER"]},
+                  }, "required": ["temperature", "seat_zone"]}}},
+]
+_TEMP_INDEX = CapabilityIndex(_TEMP_TOOLS)
+
+
+class ZoneTemperatureTest(unittest.TestCase):
+    def test_observation_injected_before_single_zone_temp_change(self):
+        ledger = make_ledger()
+        c = call("set_climate_temperature",
+                 {"temperature": 25, "seat_zone": "DRIVER"})
+        pf = pre_flight([c], ledger, _TEMP_INDEX)
+        self.assertEqual([i.tool for i in pf.injected],
+                         ["get_temperature_inside_car"])
+        self.assertEqual(pf.deferred, [c])
+
+    def test_all_zones_no_observation(self):
+        ledger = make_ledger()
+        c = call("set_climate_temperature",
+                 {"temperature": 25, "seat_zone": "ALL_ZONES"})
+        pf = pre_flight([c], ledger, _TEMP_INDEX)
+        self.assertEqual(pf.injected, [])
+        self.assertEqual(pf.kept, [c])
+
+    def test_note_when_diff_exceeds_3(self):
+        ledger = make_ledger()
+        observe(ledger, "get_temperature_inside_car",
+                {"climate_temperature_driver": 22,
+                 "climate_temperature_passenger": 22})
+        c = call("set_climate_temperature",
+                 {"temperature": 26, "seat_zone": "DRIVER"})
+        pf = pre_flight([c], ledger, _TEMP_INDEX)
+        self.assertTrue(any("LLM-POL:012" in n for n in pf.notes))
+        self.assertIn(c, pf.kept)  # note only, no block
+
+    def test_no_note_when_diff_within_3(self):
+        ledger = make_ledger()
+        observe(ledger, "get_temperature_inside_car",
+                {"climate_temperature_driver": 22,
+                 "climate_temperature_passenger": 22})
+        c = call("set_climate_temperature",
+                 {"temperature": 24, "seat_zone": "DRIVER"})
+        pf = pre_flight([c], ledger, _TEMP_INDEX)
+        self.assertFalse(any("LLM-POL:012" in n for n in pf.notes))
+
+    def test_unknown_other_zone_no_note(self):
+        """Null-FP: if the other zone temperature is unknown, no note."""
+        ledger = make_ledger()
+        c = call("set_climate_temperature",
+                 {"temperature": 30, "seat_zone": "DRIVER"})
+        # temperature already observed (to skip prior-observation deferral)
+        observe(ledger, "get_temperature_inside_car",
+                {"climate_temperature_driver": 22})
+        pf = pre_flight([c], ledger, _TEMP_INDEX)
+        self.assertFalse(any("LLM-POL:012" in n for n in pf.notes))
+
+
+# ---------------------------------------------------------------------------
+# OI-007r — LLM-POL:004 REQUIRES_CONFIRMATION tools
+# ---------------------------------------------------------------------------
+
+# Tools with REQUIRES_CONFIRMATION descriptions
+_RC_TOOL_DEFS = [
+    {"function": {"name": "open_close_trunk_door",
+                  "description": "REQUIRES_CONFIRMATION, Vehicle Control: Open or close the trunk door.",
+                  "parameters": {"properties": {
+                      "open": {"type": "boolean"},
+                  }, "required": ["open"]}}},
+    {"function": {"name": "send_email",
+                  "description": "REQUIRES_CONFIRMATION, Email Tool: sends an email.",
+                  "parameters": {"properties": {
+                      "to": {"type": "string"},
+                      "message": {"type": "string"},
+                  }, "required": ["to", "message"]}}},
+]
+_RC_INDEX = CapabilityIndex(TOOLS + _RC_TOOL_DEFS)
+
+
+class RequiresConfirmationToolTest(unittest.TestCase):
+    def test_trunk_door_blocks_without_confirmation(self):
+        ledger = make_ledger()
+        c = call("open_close_trunk_door", {"open": True})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:004"])
+        self.assertNotIn(c, pf.kept)
+        self.assertIn("trunk", pf.confirmations[0].question.lower())
+
+    def test_trunk_door_passes_after_user_confirms(self):
+        ledger = make_ledger()  # turn 0
+        ledger.add_agent_response("I'd like to operate the trunk door.")
+        ledger.add_user_turn("Yes, go ahead.")  # turn > 0, affirmative
+        c = call("open_close_trunk_door", {"open": True})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual(pf.confirmations, [])
+        self.assertIn(c, pf.kept)
+
+    def test_email_blocks_without_confirmation(self):
+        ledger = make_ledger()
+        c = call("send_email", {"to": "a@b.com", "message": "hello"})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:004"])
+
+    def test_high_beams_blocks_without_confirmation(self):
+        # Use index with REQUIRES_CONFIRMATION description for high beams
+        rc_hb_tools = [
+            {"function": {"name": n,
+                          "description": ("REQUIRES_CONFIRMATION, high beams"
+                                          if n == "set_head_lights_high_beams" else ""),
+                          "parameters": {"properties": {}, "required": []}}}
+            for n in _TOOL_NAMES
+        ]
+        rc_hb_index = CapabilityIndex(rc_hb_tools)
+        ledger = make_ledger()
+        observe(ledger, "get_exterior_lights_status", {"fog_lights": False})
+        c = call("set_head_lights_high_beams", {"on": True})
+        pf = pre_flight([c], ledger, rc_hb_index)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:004"])
+        self.assertNotIn(c, pf.kept)
+
+    def test_negation_voids_confirmation(self):
+        ledger = make_ledger()
+        ledger.add_agent_response("Shall I open the trunk?")
+        ledger.add_user_turn("No, don't do that.")
+        c = call("open_close_trunk_door", {"open": True})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:004"])
+
+
+# ---------------------------------------------------------------------------
+# OI-012 — LLM-POL:022 fastest route for multi-stop navigation
+# ---------------------------------------------------------------------------
+
+_NAV_FULL_TOOLS = TOOLS + [
+    {"function": {"name": "navigation_replace_final_destination",
+                  "description": "",
+                  "parameters": {"properties": {
+                      "route_id_leading_to_new_destination": {"type": "string"},
+                  }, "required": ["route_id_leading_to_new_destination"]}}},
+]
+_NAV_FULL_INDEX = CapabilityIndex(_NAV_FULL_TOOLS)
+
+
+class FastestRouteNoteTest(unittest.TestCase):
+    def test_multi_stop_produces_note(self):
+        ledger = make_ledger()
+        # AUT-POL:018 needs navigation_active=False for set_new_navigation to pass
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": False, "waypoints_id": []})
+        c = call("set_new_navigation",
+                 {"route_ids": ["route_a", "route_b"]})
+        pf = pre_flight([c], ledger)
+        self.assertTrue(any("LLM-POL:022" in n for n in pf.notes))
+        self.assertIn(c, pf.kept)
+
+    def test_single_segment_no_note(self):
+        ledger = make_ledger()
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": False, "waypoints_id": []})
+        c = call("set_new_navigation", {"route_ids": ["route_a"]})
+        pf = pre_flight([c], ledger)
+        self.assertFalse(any("LLM-POL:022" in n for n in pf.notes))
+
+    def test_replace_destination_multi_stop_produces_note(self):
+        ledger = make_ledger()
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": True,
+                 "waypoints_id": ["start", "wp1", "dest"]})
+        c = call("navigation_replace_final_destination",
+                 {"route_id_leading_to_new_destination": "route_x"})
+        pf = pre_flight([c], ledger, _NAV_FULL_INDEX)
+        self.assertTrue(any("LLM-POL:022" in n for n in pf.notes))
+
+    def test_replace_destination_simple_route_no_note(self):
+        ledger = make_ledger()
+        observe(ledger, "get_current_navigation_state",
+                {"navigation_active": True,
+                 "waypoints_id": ["start", "dest"]})
+        c = call("navigation_replace_final_destination",
+                 {"route_id_leading_to_new_destination": "route_x"})
+        pf = pre_flight([c], ledger, _NAV_FULL_INDEX)
+        self.assertFalse(any("LLM-POL:022" in n for n in pf.notes))
+
+
 if __name__ == "__main__":
     unittest.main()

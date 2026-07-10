@@ -4,6 +4,35 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG G, Phase G5: Ausgewählte OI-Fixes (OI-012, OI-008, OI-007r)
+
+**Scope (nach G4-Priorisierung, Rang 1–3):**
+- **OI-012 (LLM-POL:022, fastest route):** `ObligationNoteRule` für `set_new_navigation`
+  (multi-stop: `len(route_ids) >= 2`) und `navigation_replace_final_destination`
+  (multi-stop: `nav_waypoint_count >= 3`). Injiziert Note ins PLAN/VERIFY-Prompt:
+  „inform user that the fastest route was selected and offer alternatives."
+- **OI-008 (LLM-POL:012, Zonen-Temperaturdifferenz):** Drei Bausteine:
+  (a) `get_temperature_inside_car` in `OBSERVATION_TOOLS` → Ledger-Zustand wird aktualisiert.
+  (b) `set_climate_temperature` in `TOOL_EFFECTS` → projiziert Zonen-Werte nach Call.
+  (c) `PriorObservationRule` für `set_climate_temperature` (DRIVER/PASSENGER only) → injiziert
+  `get_temperature_inside_car` falls nicht im Ledger.
+  (d) `ObligationNoteRule` via `_zone_temp_note()`: wenn Einzel-Zonen-Set >3°C Differenz zur
+  anderen Zone → Note „inform user about temperature difference". Null-FP: ALL_ZONES, unknown,
+  ≤3°C → kein Block, keine Note.
+- **OI-007r (LLM-POL:004, REQUIRES_CONFIRMATION):** `RequiresConfirmationRule` für
+  `open_close_trunk_door`, `set_head_lights_high_beams`, `send_email` — alle mit
+  `description_prefix="REQUIRES_CONFIRMATION"` (beschränkt auf Tools deren Beschreibung
+  tatsächlich mit dem Prefix beginnt; leere Beschreibungen in Tests → kein false trigger).
+  Neues Feld `description_prefix` auf `RequiresConfirmationRule` + Gate in
+  `_eval_requires_confirmation`.
+
+**Tests:** 14 neue Tests in 4 Klassen (`ZoneTemperatureTest` 5, `RequiresConfirmationToolTest` 5,
+`FastestRouteNoteTest` 4). Bestehende Tests angepasst: `test_silent_refusal_replans_with_available_tools`
+(erwartet jetzt Confirmation-Flow statt Trunk-Ausführung), `test_scenario_contract`
+(`local_g3_verify.toml` ins Exclusion-Set). **239 passed / 2 failed (nur OI-010).**
+
+---
+
 ## 2026-07-10 — AUFTRAG G, Phase G3: Verifikationslauf G1+G2 (10 Tasks × 3 Trials)
 
 **Hypothese:** G1-Fix (hall_32 refusal-redirect + partial-coverage) hebt hall_32 von 0/3 auf

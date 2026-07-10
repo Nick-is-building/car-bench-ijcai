@@ -107,9 +107,14 @@ nötig). GuardResult-Telemetrie: `PolicyChecker.confirmation` BLOCK. Unbekanntes
 kein Block (Null-FP). Tests: `WeatherConfirmationTest` (8, grün). ADR-0004: 008/009 B→A
 reklassifiziert, Paper-Zeile in claims.md.
 
-**Noch offen (kein Blocker):** LLM-POL:004 (REQUIRES_CONFIRMATION-Tools) und LLM-POL:007
-(Fenster >25 % + AC) sind mit demselben Regeltyp als weitere Daten-Einträge abbildbar,
-in v1 aber noch nicht bestückt → als eigener kleiner Daten-Einschub nachziehbar.
+**Noch offen (kein Blocker):** LLM-POL:007 (Fenster >25 % + AC) ist mit demselben Regeltyp
+als weiterer Daten-Eintrag abbildbar, in v1 aber noch nicht bestückt.
+
+**Update G5 (2026-07-10):** LLM-POL:004 (REQUIRES_CONFIRMATION-Tools) jetzt bestückt:
+`RequiresConfirmationRule` für `open_close_trunk_door`, `set_head_lights_high_beams`,
+`send_email` — alle mit `description_prefix="REQUIRES_CONFIRMATION"` (Gate prüft Tool-
+Beschreibungs-Prefix über `CapabilityIndex.get_tool()`, leere Beschreibungen triggern nicht).
+5 Tests (`RequiresConfirmationToolTest`).
 
 ---
 
@@ -134,16 +139,21 @@ Ledger persistieren; deterministischer Gate „Tool erst nach Bestätigungs-Turn
 
 ---
 
-## OI-008 — LLM-POL:012 (Zonen-Temperaturdifferenz >3 °C) ohne Guard
-**Entdeckt:** 2026-07-04 (Auftrag B, ADR-0004)  **Stufe:** 4  **Priorität:** mittel
+## OI-008 — LLM-POL:012 (Zonen-Temperaturdifferenz >3 °C) ohne Guard ✅ BEHOBEN
+**Entdeckt:** 2026-07-04 (Auftrag B, ADR-0004)  **Behoben:** 2026-07-10 (Auftrag G, Phase G5)  **Stufe:** 4  **Priorität:** mittel
 
 Die 3-°C-Differenz ist nur berechenbar, wenn die Temperaturen der übrigen Zonen
 im Ledger bekannt sind (get_climate_settings-Result). Regeltyp wäre eine
 `ObligationNoteRule` mit Zonen-Vergleich über den projizierten Zustand; in v1
 nicht implementiert, Policy steht nur als Prompt-Obligation in PLAN/VERIFY.
 
-**Nächster Schritt:** Zonen-Temperaturfelder in OBSERVATION_TOOLS-Ableitung
-aufnehmen und Note-Regel ergänzen (kleiner, gut testbarer Daten-Eintrag).
+**Behoben durch (G5):** Vier Bausteine in policies.py:
+(a) `get_temperature_inside_car` in `OBSERVATION_TOOLS` → Ledger-Zustand aktualisiert.
+(b) `set_climate_temperature` in `TOOL_EFFECTS` → projiziert Zonen-Werte.
+(c) `PriorObservationRule` für `set_climate_temperature` (DRIVER/PASSENGER) → injiziert
+`get_temperature_inside_car` falls nicht im Ledger.
+(d) `ObligationNoteRule` via `_zone_temp_note()`: Einzel-Zone >3°C Differenz → Note.
+Null-FP: ALL_ZONES, unknown, ≤3°C → keine Note. 5 Tests (`ZoneTemperatureTest`).
 
 ---
 
@@ -228,8 +238,8 @@ Base-Trials — keine Refusals mehr. OI-011 vollständig geschlossen. 110 Tests 
 
 ---
 
-## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — Klasse-C-Fail
-**Entdeckt:** 2026-07-04 (B6-Wiederholungslauf, base_56 T2)  **Stufe:** 4  **Priorität:** mittel
+## OI-012 — LLM-POL:022 (fastest route explizit mitteilen) — Klasse-C-Fail ✅ BEHOBEN
+**Entdeckt:** 2026-07-04 (B6-Wiederholungslauf, base_56 T2)  **Behoben:** 2026-07-10 (Auftrag G, Phase G5)  **Stufe:** 4  **Priorität:** mittel
 
 LLM-POL:022 (Klasse C, ADR-0004: inhärent semantisch, bewusst LLM-getragen):
 Bei Multi-Stop-Routen ohne User-Vorgabe die fastest route proaktiv nehmen UND
@@ -250,7 +260,11 @@ Segmente) — eine ObligationNoteRule könnte den Hinweis „sage explizit: fast
 gewählt" in den RESPOND/VERIFY-Prompt injizieren. Gehört wie OI-007 in die
 Härtungsphase nach dem Kalibrierschuss.
 
-**Nächster Schritt:** In der Härtungsphase zusammen mit OI-007 priorisieren.
+**Behoben durch (G5):** Zwei `ObligationNoteRule`-Einträge in policies.py RULES-Tabelle:
+- `set_new_navigation`: feuert wenn `len(route_ids) >= 2` (multi-stop).
+- `navigation_replace_final_destination`: feuert wenn `nav_waypoint_count >= 3` (multi-stop).
+Beide injizieren Note: „inform user that the fastest route was selected and offer alternatives."
+4 Tests (`FastestRouteNoteTest`).
 
 ---
 
