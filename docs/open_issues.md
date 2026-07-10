@@ -516,7 +516,8 @@ und Trajektorie lesen, bevor eine feste Zuordnung „Prozent→control_sunroof/w
 
 ## OI-018 — Ledger-abgeleitete Wert-/Route-Auflösung fehlte (dis_18/dis_24) + dis_8 Grenzfall
 **Entdeckt:** 2026-07-09 (Auftrag E3-FIX, Phase F1)  **Behoben (Code):** 2026-07-09 —
-**Verifikation gegen echte Traces AUSSTEHEND (Cost-Gate).**  **Stufe:** 6
+**Verifikation: TEILERFOLG.** Code greift wenn INTAKE den Slot korrekt flaggt (2/6 Fälle).
+Intake-Prompt-Schärfung revertiert (Regression dis_0).  **Stufe:** 6
 
 **Root Cause (an E2-Traces belegt, nicht vermutet):** Zwei `disambiguation_internal`-Tasks
 scheitern 3/3 an derselben Stelle — die Kaskade erreicht Priorität 5 und stellt die

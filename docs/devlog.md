@@ -1840,3 +1840,30 @@ $1.50–$2.50, Freigabe erteilt.
 - **dis_24** (Fastest-Route-Selektion): ≥ 1/3 (vorher 0/3 reward, T0 hatte korrekte Actions
   aber OI-012-Policy-Fail; geschärfter Schema-Argname-Trigger).
 Falls dis_0 < 2/3 → Rollback Intake-Prompt, Fix als "greift wenn Intake konsistent" akzeptieren.
+
+**Ergebnis Rerun v2 (Lauf `20260709-230222`, $~1.50):**
+- **dis_0: 0/3 — REGRESSION** (Baseline 2/3). Alle 3 Trials scheitern am Provenance-Check
+  nach der Confirmation-Rückfrage ("I can't proceed — I don't have a confirmed value").
+- dis_18: 0/3. INTAKE flaggt `fan_speed_level` statt Schema-Arg `level`. Auch
+  `relative_change` wird nicht konsistent gesetzt. `_RELATIVE_VALUE_RULES` matcht nicht.
+- dis_24: 1/3 (T2=1.0). T0/T1 flaggen `route_id` statt `route_id_leading_to_new_destination`.
+  `_SELECTION_RULES` matcht nicht. T2 = korrekter Arg-Name → voller Durchlauf.
+- Alle 8 Fails: Disambiguation-Engine feuert "user clarification required" weil die
+  tabellengesteuerten Regeln auf (tool, arg)-Exact-Match angewiesen sind und die INTAKE-
+  Arg-Namen stochastisch falsch kommen.
+
+**Entscheidung: ROLLBACK** (Vorab-Regel: dis_0 < 2/3 → revert). Intake-Prompt auf
+den Stand vor der Schärfung zurückgesetzt (commit d1e0d29). Die Schärfung hat die
+bestehende Auflösung gebrochen ohne die Ziel-Tasks konsistent zu verbessern.
+
+**F1-Abschluss als TEILERFOLG:**
+- **Was greift:** Die generische Enum-Validierung (OI-017) + die tabellengesteuerten
+  Regeln (`_SELECTION_RULES`, `_RELATIVE_VALUE_RULES`) funktionieren nachweislich, wenn
+  INTAKE den Slot unter dem exakten Schema-Argnamen flaggt (dis_18 T2, dis_24 T0).
+- **Was nicht greift:** INTAKE flaggt in ~2/3 der Fälle den Slot unter einem
+  Natürlichsprach-Namen statt dem Schema-Namen. Prompt-Schärfung verschlimmerte die
+  Lage (Regression dis_0). Die Kaskaden-Resolution-Lücken sind ORTHOGONAL zum
+  Enum-Validierungs-Muster — ein PROMPT-Problem, kein Architektur-Problem.
+- **Möglicher Ansatz (nicht mehr in F1-Scope):** Fuzzy-Matching auf Arg-Namen in
+  `_derive_slot_value` (analog zum Fuzzy-Gate auf Tool-Namen). Aber: zusätzliche
+  Kopplung + FP-Risiko, nicht trivial. Dokumentiert als Härtungskandidat.
