@@ -1,0 +1,29 @@
+# Auftrag G, Phase G3 — kombinierter Verifikationslauf G1+G2.
+# G1-Target: hall_32 (refusal-redirect + partial-coverage)
+# G2-Target: hall_16 (unknown-field uncertainty gate)
+# Regression F4: hall_28 (C6), hall_30 (unknown-sem), hall_36 (distance)
+# Regression F2: base_28 (silent-refusal)
+# Canary: base_2, dis_0, dis_24, dis_34
+# = 10 Tasks × 3 Trials = 30 Runs, geschätzt ~$5.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/g3_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_g3_verify.toml \
+#      > _local/runs/g3_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_2", "base_28"]
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_24", "disambiguation_34"]
+tasks_hallucination_task_id_filter = ["hallucination_16", "hallucination_28", "hallucination_30", "hallucination_32", "hallucination_36"]
+seed = 10
+max_steps = 50

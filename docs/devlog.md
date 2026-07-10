@@ -4,6 +4,20 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG G, Phase G3: Verifikationslauf G1+G2 (10 Tasks × 3 Trials)
+
+**Hypothese:** G1-Fix (hall_32 refusal-redirect + partial-coverage) hebt hall_32 von 0/3 auf
+≥2/3. G2-Fix (hall_16 unknown-field uncertainty gate) hebt hall_16 von 1/3 auf ≥2/3. Keine
+Regression auf F2+F4 Fixes (hall_30 3/3, hall_36 3/3, base_28 3/3).
+
+**Tasks:** hall_16, hall_28, hall_30, hall_32, hall_36, base_2, base_28, dis_0, dis_24, dis_34.
+**Config:** `local_g3_verify.toml`, seed=10, 3 Trials, max_steps=50.
+**Kostenschätzung:** ~$5 (Agent + Evaluator). Freigabe erteilt.
+
+**Ergebnis:** _(nach Lauf eintragen)_
+
+---
+
 ## 2026-07-10 — AUFTRAG G, Phase G2: hall_16 Fix (Unknown-Field Uncertainty, Lesson 1a)
 
 **Ausgangslage:** hall_16 1/3 in Lauf d68c588. Agent sieht window_position="unknown" für Front-
