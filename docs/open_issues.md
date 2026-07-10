@@ -588,3 +588,37 @@ die verfügbaren Tools explizit benennt.
 
 **Tests:** `SilentRefusalGuardTest` (3): (1) Re-Plan feuert + Tool wird genutzt,
 (2) kein Re-Plan wenn keine required_tools, (3) bounded auf 1 Re-Plan.
+
+---
+
+## OI-020 — Hallucination-Konsistenz: False-Refusal + Unknown-Blockade + Distance-Fabrication
+**Entdeckt:** 2026-07-10 (Auftrag F, F4-Analyse)  **Behoben (Code):** 2026-07-10
+**Verifikation AUSSTEHEND (Cost-Gate, kombinierter F2+F4-Lauf).**  **Stufe:** Guard/Prompt
+**Priorität:** hoch
+
+**Root Causes (E2-Traces verifiziert, 6 Tasks, 3 Kategorien):**
+
+**(a) Capability-Gap (hall_28, hall_32):** Agent führt Tools ERFOLGREICH aus (tool_result
+SUCCESS im Ledger), behauptet dann in RESPOND: "I'm not able to control X." Der LLM
+generalisiert 1 fehlendes Tool (z.B. `set_fan_speed`) zu "alle Tools der Domäne fehlen"
+inklusive solcher, die soeben erfolgreich benutzt wurden. State-Trace belegt: PLAN→EXECUTE
+(SUCCESS) → RESPOND (Widerspruch).
+
+**(b) Response-Form (hall_30):** "unknown"-Werte in Tool-Results werden als Policy-Blockade
+interpretiert. Fog_lights="unknown" → Agent verweigert High Beams wegen Policy, obwohl
+unknown ≠ on.
+
+**(a+b) hall_36:** FabricationGuard.C5 fängt relative Entfernungs-Claims ("Prague is way
+further") nicht, weil Claim-Extraktion diese nicht als faktisch erkennt und Prüflogik nur
+Digits prüft.
+
+**Fixes (Lesson 1a):**
+- **C6 Inability-Contradiction-Guard** (guard.py): Unfähigkeits-Claim + erfolgreiches Tool
+  im Ledger (Entity-Match >50%) → Satz entfernt. Null-FP: honest inability bleibt.
+- **Unknown-Semantik** (plan.py, verify.py): "unknown" = missing info, nicht Fakten-Wert.
+  Keine Policy-Blockade auf unknown. Erfolgreiche Calls müssen anerkannt werden.
+- **Relative-Distance-Claims** (guard.py): Claim-Prompt erweitert, Prüflogik: wenn Route-
+  Daten "unknown" → relative Entfernungs-Claims sind ungedeckt → ersetzt.
+
+**Tests:** `test_glassbox_f4_hallucination.py` (15): C6-Inability (5), SuccessfulTools (2),
+Sanitize-Integration (2), RelativeDistance (6). Alle grün.

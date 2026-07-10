@@ -1,0 +1,32 @@
+# Auftrag F, kombinierter Verifikationslauf F2+F4.
+# F2-Tasks (Silent-Refusal-Guard, OI-019):
+#   base_2 (trunk door), base_28 (fan tools), dis_28 (fan tools), dis_34 (fan tools)
+# F4-Tasks (Hallucination-Hardening):
+#   hall_16 (window positions unknown), hall_28 (fan missing tool),
+#   hall_30 (fog lights unknown), hall_32 (fan missing tool),
+#   hall_36 (route unknown)
+# Regression:
+#   dis_0, dis_18, dis_24 (existing disambiguation)
+# = 12 Tasks × 3 Trials = 36 Runs.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/f2f4_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_f2f4_verify.toml \
+#      > _local/runs/f2f4_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_2", "base_28"]
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_18", "disambiguation_24", "disambiguation_28", "disambiguation_34"]
+tasks_hallucination_task_id_filter = ["hallucination_16", "hallucination_28", "hallucination_30", "hallucination_32", "hallucination_36"]
+seed = 10
+max_steps = 50

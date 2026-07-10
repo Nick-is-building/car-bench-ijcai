@@ -107,6 +107,86 @@ _KNOWN_ENTITIES = frozenset({
 
 _ROUTE_CHOICE_WORDS = ("fastest", "quickest", "shortest", "optimal", "direct")
 
+_INABILITY_PATTERNS = re.compile(
+    r"(?:I'm not able to|I am not able to|I cannot|I can't|I'm unable to|"
+    r"I am unable to|unable to control|beyond what I can do|"
+    r"not able to control|You'll need to .* manually)",
+    re.IGNORECASE,
+)
+
+
+def _successful_tool_names(ledger: Ledger) -> set[str]:
+    """Tool names that have at least one SUCCESS result in the ledger."""
+    import json as _json
+
+    names: set[str] = set()
+    for e in ledger.entries:
+        if e.kind != "tool_result" or e.tool_name is None:
+            continue
+        text = e.content if isinstance(e.content, str) else None
+        if text is None:
+            continue
+        try:
+            data = _json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and str(data.get("status", "")).upper() == "SUCCESS":
+            names.add(e.tool_name)
+    return names
+
+
+def _inability_contradicts_ledger(sentence: str, successful_tools: set[str]) -> str | None:
+    """If *sentence* claims inability but a successful tool contradicts it, return that tool name."""
+    if not _INABILITY_PATTERNS.search(sentence):
+        return None
+    sent_lower = sentence.lower()
+    for tool_name in successful_tools:
+        entity_words = _tool_entity_synonyms(tool_name)
+        if not entity_words:
+            continue
+        matched = sum(1 for w in entity_words if w in sent_lower)
+        if matched > len(entity_words) / 2:
+            return tool_name
+    return None
+
+
+_RELATIVE_DISTANCE_WORDS = re.compile(
+    r"(?:further|farther|closer|too far|way further|need to stop|need to charge|"
+    r"won't make it|wouldn't make it|can't make it|cannot make it|"
+    r"definitely need|you'd need to|you would need to|much further|"
+    r"shorter than|longer than|takes about|hours away|hours drive)",
+    re.IGNORECASE,
+)
+
+
+def _is_relative_distance_claim(value: str) -> bool:
+    return bool(_RELATIVE_DISTANCE_WORDS.search(value))
+
+
+def _route_data_is_unknown(ledger: Ledger) -> bool:
+    """True if the ledger has a route query whose result contains 'unknown'."""
+    import json as _json
+
+    for e in ledger.entries:
+        if e.kind != "tool_result" or e.tool_name is None:
+            continue
+        if "route" not in e.tool_name:
+            continue
+        text = e.content if isinstance(e.content, str) else None
+        if text is None:
+            continue
+        try:
+            data = _json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            result = data.get("result", data)
+            if isinstance(result, dict):
+                for v in result.values():
+                    if v == "unknown":
+                        return True
+    return False
+
 
 def _is_state_changing(tool_name: str) -> bool:
     return any(tool_name.startswith(p) for p in _STATE_CHANGING_PREFIXES)
@@ -348,14 +428,19 @@ class FabricationGuard:
         system = (
             "You are a claim extractor for an in-car voice assistant. "
             "Given a draft response, list every specific factual value it asserts: "
-            "numbers, times, distances, temperatures, ETA, specific states, availability."
-            "Only list concrete claims that could be wrong if invented."
+            "numbers, times, distances, temperatures, ETA, specific states, availability. "
+            "IMPORTANT: Distance comparisons, travel time estimates, route assessments, "
+            "and relative location statements (e.g. 'X is further than Y', 'that is too "
+            "far', 'the route takes about Z hours', 'you would need to stop') are FACTUAL "
+            "CLAIMS that require a source — list them with the comparative/relative phrase "
+            "as the value. Only list concrete claims that could be wrong if invented."
         )
         content = (
             f"# Draft response\n{draft}\n\n"
             "List each specific factual value asserted in the draft. "
             "For each:\n"
-            "- value: the specific value (e.g. '42 minutes', '22°C', 'unavailable')\n"
+            "- value: the specific value (e.g. '42 minutes', '22°C', 'way further', "
+            "'need to stop and charge')\n"
             "- sentence: the full sentence that contains this value\n\n"
             "Leave out generic confirmations ('Done', 'All set'). "
             "Only list values that could be wrong if invented."
@@ -372,22 +457,58 @@ class FabricationGuard:
 
         safe = draft
         for claim in resp.claims:
-            # Only check claims with numeric content — string descriptions may be valid
-            # paraphrases of tool results (e.g. "cloudy with rain" for "cloudy_and_rain").
-            if not re.search(r"\d", claim.value):
+            has_digits = bool(re.search(r"\d", claim.value))
+            is_relative_distance = _is_relative_distance_claim(claim.value)
+
+            if not has_digits and not is_relative_distance:
                 continue
-            if not _value_in_ledger(claim.value, corpus):
-                _log.info(
-                    "FabricationGuard.C5: unsupported claim replaced",
-                    claim_value=claim.value,
-                    sentence=claim.sentence[:80],
-                )
-                safe = safe.replace(
-                    claim.sentence,
-                    "I'm sorry, I don't have confirmed information about that.",
-                ).strip()
+
+            if has_digits and _value_in_ledger(claim.value, corpus):
+                continue
+
+            if is_relative_distance and not _route_data_is_unknown(ledger):
+                continue
+
+            _log.info(
+                "FabricationGuard.C5: unsupported claim replaced",
+                claim_value=claim.value,
+                sentence=claim.sentence[:80],
+            )
+            safe = safe.replace(
+                claim.sentence,
+                "I'm sorry, I don't have confirmed information about that.",
+            ).strip()
+
+        safe = self._fix_inability_contradictions(safe, ledger)
 
         return self._add_route_mention_if_missing(safe, ledger)
+
+    @staticmethod
+    def _fix_inability_contradictions(draft: str, ledger: Ledger) -> str:
+        """Replace false inability claims that contradict successful tool calls."""
+        successful = _successful_tool_names(ledger)
+        if not successful:
+            return draft
+        fixed = draft
+        for sentence in re.split(r"(?<=[.!?])\s+", draft):
+            tool = _inability_contradicts_ledger(sentence, successful)
+            if tool is not None:
+                _log.info(
+                    "FabricationGuard.C6: inability claim contradicts successful tool",
+                    tool=tool,
+                    sentence=sentence[:80],
+                )
+                fixed = fixed.replace(sentence, "").strip()
+        if not fixed:
+            successful_descriptions = [
+                t.replace("_", " ") for t in sorted(successful)
+                if _is_state_changing(t)
+            ]
+            if successful_descriptions:
+                fixed = "Done! I've completed the following: " + ", ".join(successful_descriptions) + "."
+            else:
+                fixed = "Done!"
+        return fixed
 
     def _add_route_mention_if_missing(self, draft: str, ledger: Ledger) -> str:
         route_calls = [

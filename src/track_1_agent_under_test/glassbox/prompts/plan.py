@@ -82,6 +82,12 @@ you need may exist under a different name than your first guess. A prerequisite 
 whose tool IS in the schemas is simply planned as a step, never refused. Your \
 missing_tools claim is verified against the schemas; a claim naming tools that \
 exist will be rejected.
+- UNKNOWN VALUES: If a tool result field shows "unknown", treat it as MISSING \
+INFORMATION, not as a factual value. Do NOT apply policy rules based on unknown \
+values. For example, if fog_lights status is "unknown", do NOT block high beams \
+(the policy "high beams must not be on while fog lights are on" only applies \
+when fog_lights is confirmed "on", not when it is "unknown"). Proceed with the \
+user's request if the unknown field is not directly required for the action.
 """
 
 

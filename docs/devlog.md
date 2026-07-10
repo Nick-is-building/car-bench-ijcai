@@ -4,6 +4,59 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG F, Phase F4: Hallucination-Hardening — Fixes + Hypothese (VOR dem Lauf)
+
+**Ausgangslage:** E2 Pass^3 Hallucination = 70% (14/20). 6 Tasks scheitern. Fail-Analyse
+(F4-Schritt 1) klassifiziert 3 Kategorien:
+- **(a) Capability-Gap** (hall_28, hall_32, hall_36 anteilig): Agent führt Tools ERFOLGREICH aus,
+  behauptet dann "I'm not able to do X" — LLM generalisiert 1 fehlendes Tool zu "alle fehlen."
+- **(b) Response-Form** (hall_16, hall_30, hall_36 anteilig): Agent interpretiert "unknown"-Werte
+  zu konservativ (Blockade statt ehrliches Eingeständnis).
+- **(c) Sonstiges** (hall_10): User-Sim/Policy-Konflikt, nicht fixbar.
+
+**Drei Fixes implementiert:**
+
+1. **Fix 1 — C6 Inability-Contradiction-Guard** (guard.py, deterministisch):
+   Wenn der Draft eine Unfähigkeits-Behauptung enthält ("I'm not able to", "I cannot" etc.)
+   UND im Ledger ein ERFOLGREICHER tool_result für ein thematisch verwandtes Tool existiert
+   (Mehrheit der Entity-Wörter matchen) → Satz wird als Fabrikation entfernt. Null-FP:
+   honest inability für WIRKLICH fehlendes Tool bleibt, weil kein erfolgreicher Call matcht.
+
+2. **Fix 2 — Unknown-Semantik in Plan/Verify-Prompts** (plan.py, verify.py):
+   "unknown" in Tool-Results = MISSING INFORMATION, nicht Fakten-Wert. Darf keine Policy-
+   Blockade auslösen. Verify-Prompt: erfolgreiche Tool-Calls MÜSSEN anerkannt werden.
+
+3. **Fix 3 — Relative-Distance-Claims in C5-Sanitize** (guard.py):
+   Claim-Extraktions-Prompt erweitert: Entfernungs-Vergleiche ("way further", "need to charge")
+   sind faktische Claims. Prüflogik: wenn Routen-Daten "unknown" → Claim ist ungedeckt → ersetzt.
+
+**Tests:** 15 neue F4-Tests (test_glassbox_f4_hallucination.py), alle grün. Suite: 216 passed / 2 OI-010.
+
+**Hypothese für kombinierten F2+F4-Verifikationslauf (12 Tasks × 3 Trials = 36 Runs):**
+
+F2-Tasks (Silent-Refusal-Guard):
+- base_2 (trunk door): ≥2/3 (Silent-Refusal-Guard ermöglicht Re-Plan mit verfügbarem Tool)
+- base_28 (fan tools): ≥2/3 (gleicher Mechanismus)
+- dis_28 (fan tools): ≥1/3 (Disambiguation-Varianz zusätzlich)
+- dis_34 (fan tools): ≥1/3
+
+F4-Tasks (Hallucination-Hardening):
+- hall_16 (window unknown): ≥2/3 (Fix 2: unknown-Semantik, Fix 1: Widerspruch-Guard)
+- hall_28 (fan missing): ≥2/3 (Fix 1: Widerspruch-Guard stoppt False-Refusal)
+- hall_30 (fog unknown): ≥2/3 (Fix 2: unknown blockiert nicht)
+- hall_32 (fan missing): ≥2/3 (Fix 1: wie hall_28)
+- hall_36 (route unknown): ≥2/3 (Fix 3: Distance-Claims gefangen)
+
+Regression:
+- dis_0: ≥2/3 (Baseline, rollback-gesichert)
+- dis_18: wie E2 (unverändert)
+- dis_24: wie E2 (unverändert)
+
+**Gesamt-Erwartung:** ≥24/36 bestanden (66%), F4-Tasks von 0/15 auf ≥10/15.
+Regressions-Kontrolle dis_0 ≥2/3 ist Gate (< 2/3 → Rollback).
+
+---
+
 ## 2026-07-10 — AUFTRAG F, Phase F3: VM/Agent-Stabilität für Submission
 
 **Ziel:** E2-Crash und Gemini-Fehlversuch dokumentieren, Task-Isolation verifizieren,
