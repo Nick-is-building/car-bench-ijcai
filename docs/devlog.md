@@ -4,6 +4,78 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-10 — AUFTRAG F, Phase F3: VM/Agent-Stabilität für Submission
+
+**Ziel:** E2-Crash und Gemini-Fehlversuch dokumentieren, Task-Isolation verifizieren,
+Speicher-Situation bewerten, minimale defensive Absicherung einbauen.
+
+### 1) E2-Crash-Rekonstruktion
+
+**Befund:** Die VM rebootete am 2026-07-08 um 18:37 UTC (belegt via `last reboot`). dmesg
+zeigt **kein** OOM-Kill, kein Kernel-Panic, keine signifikanten Fehler. Die einzigen Fehler
+im journalctl sind SSH-Connection-Resets (02:45–02:49, automatisierter Scan-Traffic).
+Wahrscheinlichste Ursache: GCP-Host-Maintenance oder transiente VM-Preemption — nicht
+reproduzierbar und nicht durch den Agent-Lauf verursacht.
+
+Der E2-Lauf wurde nach dem Reboot **neu gestartet** (2026-07-09 00:38–03:28, 180 Task-Runs,
+10164s) und lief **komplett und fehlerfrei** durch. Kosten aus dem Vor-Crash-Versuch: $0
+(verifiziert via /proc-Log-Recovery — kein LLM-Call kam durch, weil der Agent-Server beim
+Crash noch nicht ready war).
+
+### 2) Gemini-Fehlversuch
+
+Dies bezieht sich auf den **Vertex-AI-Pfad** (devlog 2026-07-07): Versuch, Claude über
+Googles Vertex AI zu nutzen. Google-Kontingent-Blockade (48h-Ablehnung für Neukunden-
+Projekte, `us-east5` nicht freigeschaltet). **Nicht** ein Problem mit dem Gemini-Judge
+(gemini-2.5-flash als User-Sim/Judge läuft stabil). Vertex-Pfad wurde aufgegeben, direkter
+Anthropic-Provider in Verwendung.
+
+### 3) Task-Isolation (verifiziert)
+
+**car-bench `run.py` (Zeile 312–338):** Jeder Task wird in `try/except Exception` gewrappt.
+Bei Exception → `reward=0.0` + Error-Traceback in `info`, Schleife läuft weiter. **Ein
+einzelner abgestürzter Task reißt den Lauf NICHT mit.** Dies gilt sowohl im Direkt-Modus
+(`run.py`) als auch im agentbeats/A2A-Modus (der Evaluator-Server nutzt intern dieselbe
+Logik).
+
+**Agent-Server-Crash:** Falls unser Agent-Prozess crasht, bekommt der Evaluator Connection-
+Errors und der gesamte Lauf ist verloren (kein Restart-Mechanismus). Schutz: siehe Punkt 4.
+
+### 4) Speicher-Situation
+
+- **16 GB RAM, 0 Swap.** Keine Swap-Partition/Datei konfiguriert.
+- Ruhezustand: ~1.2 GB belegt, 14 GB frei. Unter E2-Last: geschätzt 3–5 GB (Agent +
+  Evaluator + Python-Prozesse), kein kritischer Engpass beobachtet.
+- **Risiko:** Ohne Swap führt ein Speicher-Spike direkt zum OOM-Kill (kein Puffer). Bei
+  180 Task-Runs + längeren Trajektorien könnte Speicher-Akkumulation im Agent-Prozess
+  (Ledger, LLM-Kontexte) theoretisch problematisch werden.
+- **Empfehlung:** 4 GB Swapfile anlegen (`fallocate -l 4G /swapfile && chmod 600 /swapfile
+  && mkswap /swapfile && swapon /swapfile`). Verhindert harten OOM-Kill, gibt dem Kernel
+  Spielraum. Für die Finalwertung am 19. Juli sinnvoll.
+
+### 5) Health-Check/Retry am Agent-Server-Start
+
+**Ist-Zustand (agentbeats/run_scenario.py):** Bereits robust implementiert:
+- 90s Timeout (`DEFAULT_AGENT_STARTUP_TIMEOUT_SECONDS`)
+- 1s Polling-Intervall auf Agent-Card-Endpoint
+- Process-Exit-Detection (Agent stirbt vor Readiness → sofort Abbruch)
+- **Kein Umbau nötig.** Das Startup ist die robusteste Stelle der Pipeline.
+
+**Schwachstelle:** Kein Restart bei Mid-Run-Crash des Agent-Servers. Für die Submission
+akzeptabel — der Agent-Prozess ist bisher in keinem der 6 Dev-Läufe (>400 Task-Runs)
+abgestürzt. Die einzige Instabilität kam von außen (VM-Reboot).
+
+### 6) Fazit
+
+- **E2-Crash:** nicht reproduzierbar, keine Agent-Ursache, kein OOM. GCP-infra-bedingt.
+- **Gemini:** kein Problem (Judge stabil); Vertex-Pfad war ein Provider-Versuch, nicht Gemini.
+- **Task-Isolation:** gegeben (try/except pro Task).
+- **Speicher:** 16 GB ohne Swap, bisher ausreichend, aber kein Puffer. Swap empfohlen.
+- **Health-Check:** bereits vorhanden, kein Umbau nötig.
+- **Kein großer Umbau.** Einzige konkrete Aktion: Swap-Empfehlung (manuell, kein Code).
+
+---
+
 ## 2026-07-08 — Härtung H3 (Fix C1): OI-016 schema-aware Value-Flow-Resolver (Hypothese, vor Mini-Rerun)
 
 **Ausgangslage (aus dem Fix-A+B-Rerun, Eintrag unten):** Fix A + B wirken beide, aber dis_4 bleibt 0/3
