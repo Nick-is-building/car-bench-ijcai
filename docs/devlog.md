@@ -4,6 +4,54 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-11 — AUFTRAG I, Phase I3: Modellvergleich Opus-4-6 vs. Sonnet-4-6
+
+**Ziel:** Identisches Task-Set (18 Tasks aus H-Verifikation), identischer Code + Guards,
+nur AGENT_LLM = `anthropic/claude-opus-4-6` statt `anthropic/claude-sonnet-4-6`.
+Vergleichsbasis: H-Verifikation (Lauf 20260711-103751).
+
+**Verifikationslauf-Config:** 18 Tasks × 3 Trials = 54 Runs.
+Agent claude-opus-4-6, Judge/User gemini-2.5-flash, seed 10, Provider anthropic.
+
+**Leitfrage für den Vergleich:**
+1. Wo liefert Opus bessere LLM-Entscheidungen (INTAKE, PLAN, Prompt-Compliance)?
+2. Wo sind die deterministic Guards der limitierende Faktor (unabhängig vom Modell)?
+3. Wie hoch ist der marginale Gewinn von Opus über Sonnet bei gleichem Glassbox-Code?
+
+**Hypothese pro Task:**
+
+| Task | Sonnet (H) | Opus erwartet | Begründung |
+|---|---|---|---|
+| **Dis** | | | |
+| dis_0 | 3/3 | 3/3 | Deterministisch (Präferenz-Auflösung), modellunabhängig |
+| dis_16 | 0/3 | 0–1/3 | Relative Werte (fan_speed), strukturelles Limit — Opus reasoning könnte helfen |
+| dis_18 | 2/3 | 2–3/3 | INTAKE-Stochastik; Opus besser bei Arg-Erkennung |
+| dis_20 | 3/3 | 3/3 | Stabil seit H, deterministisch |
+| dis_22 | 0/3 | 0–1/3 | Ähnlich dis_16, strukturelles Limit |
+| dis_24 | 2/3 | 2–3/3 | Ähnlich dis_18, INTAKE-Stochastik |
+| dis_28 | 1/3 | 1–2/3 | Stochastisch, Opus etwas konsistenter erwartet |
+| dis_32 | 3/3 | 3/3 | Stabil |
+| dis_34 | 2/3 | 2–3/3 | T0-Fail stochastisch, Opus konsistenter |
+| dis_36 | 3/3 | 3/3 | Stabil |
+| **Hall** | | | |
+| hall_10 | 3/3 | 3/3 | Fog-Gate deterministisch |
+| hall_16 | 3/3 | 3/3 | Unknown-Caveat deterministisch |
+| hall_28 | 1/3 | 1–2/3 | Prompt-Compliance instabil, Opus etwas besser |
+| hall_32 | 1/3 | 1–2/3 | Gleich wie hall_28 |
+| **Base** | | | |
+| base_10 | 3/3 | 3/3 | Fog-Gate deterministisch |
+| base_28 | 3/3 | 3/3 | Regressionswächter |
+| base_30 | 2/3 | 2–3/3 | Confirmation-Qualität, Opus präziser |
+| base_32 | 3/3 | 3/3 | Deterministisch |
+
+**Erwarteter Opus Pass^3:** 10–12/18 (Sonnet: 9/18).
+Marginaler Gewinn: +1–3 Tasks, hauptsächlich durch bessere INTAKE/Prompt-Compliance.
+Deterministische Guards sind der Haupthebel, nicht das LLM — das ist die Paper-These.
+
+**Kosten-Schätzung:** ~$50–55 (54 Runs × ~$0.95/Run mit Caching + Judge).
+
+---
+
 ## 2026-07-11 — AUFTRAG I, Phase I2: Wert-Durchfluss Verifikation
 
 **I1-Fix implementiert (commit f34cc73): deterministischer Wert-Durchfluss-Check.**
