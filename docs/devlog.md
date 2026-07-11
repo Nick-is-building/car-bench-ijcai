@@ -27,6 +27,33 @@ Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash, seed 10, Provider anthropi
 **Erwarteter Gesamt-Impact:** Keine neuen Gewinne (I1 ist Defense-in-Depth), keine Regression.
 **Kosten-Schätzung:** ~$3–4 (18 Runs × ~$0.15–0.20/Run + Judge).
 
+### Ergebnis Verifikationslauf I2 (2026-07-11, Lauf 20260711-162509)
+
+**Config:** 6 Tasks × 3 Trials = 18 Runs, seed 10, ~30 min, Agent claude-sonnet-4-6.
+**Rohdaten:** `docs/experiments/20260711-162509__track_1_agent_under_test-local_i2_verify__train-trials3-dis6ids.json`
+
+| Task | T1 | T2 | T3 | Pass^3 | Hypothese | Match? |
+|---|---|---|---|---|---|---|
+| dis_0 | 1 | 1 | 1 | 3/3 ✓ | 3/3 | ✓ |
+| dis_20 | 1 | 1 | 1 | 3/3 ✓ | 3/3 | ✓ |
+| dis_26 | 0 | 0 | 0 | 0/3 ✗ | 1–2/3 | ✗ (schlechter) |
+| dis_32 | 1 | 1 | 1 | 3/3 ✓ | 3/3 | ✓ |
+| dis_34 | 1 | 0 | 1 | 2/3 ✗ | 2–3/3 | ✓ |
+| dis_36 | 1 | 1 | 1 | 3/3 ✓ | 3/3 | ✓ |
+
+**Gesamt:** 14/18 = 77.8%, Pass^3 = 4/6 = 66.7%.
+**VALUE-FLOW Triggers:** 0 — der I1-Check wurde nicht aktiviert (Disambiguation pre_flight
+setzt Werte korrekt, Re-Plans lösen Neuauflösung aus → self-healing). I1 ist bestätigt als
+Defense-in-Depth, nicht als direkter Fix.
+
+**Hypothese vs. Realität:**
+- 5/6 Hypothesen korrekt.
+- **dis_26** schlechter als erwartet (0/3 statt 1–2/3): „target state of charge"
+  Disambiguation — Agent berechnet für 80% und 100% parallel ohne User-Präferenz-Frage,
+  User bricht ab. Strukturelles Policy-Problem, nicht vom Value-Flow-Check adressierbar.
+- **dis_34** T1-Fail stochastisch, wie erwartet.
+- **Keine Regression** auf dis_0, dis_20, dis_32, dis_36.
+
 ---
 
 ## 2026-07-11 — AUFTRAG H: Fixrunde H — Verifikationslauf Hypothese
