@@ -168,6 +168,19 @@ def _coerce(value: str, sample: object) -> object:
     return text
 
 
+def _build_slot_question(tool: str, argument: str, enum_values, candidates) -> str:
+    action = tool.replace("_", " ")
+    if enum_values:
+        opts = ", ".join(str(v) for v in enum_values)
+        return (f"To {action}, I need a value for '{argument}'. "
+                f"The available options are: {opts}. Which one would you like?")
+    if candidates:
+        opts = ", ".join(str(v) for v in candidates)
+        return f"To {action}, which '{argument}' would you like — {opts}?"
+    return (f"To {action}, could you tell me the exact value "
+            f"you'd like for '{argument}'?")
+
+
 class DisambiguationEngine:
     """Deterministic resolution cascade (Lesson 1a: code decides)."""
 
@@ -291,7 +304,11 @@ class DisambiguationEngine:
                 question = (
                     slot.get("question")
                     or ctx.intent.get("clarification_question", "").strip()
-                    or "Could you tell me the exact value you'd like me to use?"
+                    or _build_slot_question(
+                        call.tool, arg,
+                        index.enum_values(call.tool, arg),
+                        slot.get("candidates"),
+                    )
                 )
                 res = self.resolve_slot(
                     is_state_changing=bool(ctx.intent.get("is_state_changing", True)),

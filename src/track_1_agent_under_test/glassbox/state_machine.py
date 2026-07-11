@@ -560,7 +560,7 @@ class StateMachine:
                         "FabricationGuard.C2: BLOCK — aborting call",
                         tool=call.tool, reason=prov.reason,
                     )
-                    return self._respond_fabrication_block(ctx, prov)
+                    return self._respond_fabrication_block(ctx, prov, call)
                 if prov.verdict == "UNCERTAIN" and first_uncertain is None:
                     first_uncertain = (call, prov)
 
@@ -582,7 +582,7 @@ class StateMachine:
                     "FabricationGuard: UNCERTAIN rebuttals exhausted → honesty sink",
                     tool=call_unc.tool,
                 )
-                return self._respond_provenance_sink(ctx, prov_unc)
+                return self._respond_provenance_sink(ctx, prov_unc, call_unc)
 
             ctx.transition(State.EXECUTE)
             for call in calls:
@@ -626,20 +626,47 @@ class StateMachine:
         final = prompts.respond.finalize(safe, ctx)
         return self._finish(ctx, final)
 
-    def _respond_fabrication_block(self, ctx: TurnContext, result: "GuardResult") -> Action:
+    def _respond_fabrication_block(self, ctx: TurnContext, result: "GuardResult",
+                                    call: PlannedCall | None = None) -> Action:
         ctx.transition(State.RESPOND)
-        text = (
-            "I'm sorry, I can't proceed — I don't have a confirmed value to use. "
-            "Could you clarify the exact value you'd like me to set?"
-        )
+        tool = call.tool if call else ""
+        action = tool.replace("_", " ") if tool else "that"
+        argument = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        if tool:
+            text = (
+                f"I'm not certain which value you'd like me to use for "
+                f"'{argument}' when I {action}. Could you state it explicitly?"
+                if argument else
+                f"I'm sorry, I can't proceed with {action} — I don't have a "
+                f"confirmed value to use. Could you clarify the exact value "
+                f"you'd like me to set?"
+            )
+        else:
+            text = (
+                "I'm sorry, I can't proceed — I don't have a confirmed value "
+                "to use. Could you clarify the exact value you'd like me to set?"
+            )
         return self._finish(ctx, text)
 
-    def _respond_provenance_sink(self, ctx: TurnContext, result: "GuardResult") -> Action:
+    def _respond_provenance_sink(self, ctx: TurnContext, result: "GuardResult",
+                                  call: PlannedCall | None = None) -> Action:
         ctx.transition(State.RESPOND)
-        text = (
-            "I'm not certain which value you'd like me to use for that. "
-            "Could you confirm the exact setting you have in mind?"
-        )
+        tool = call.tool if call else ""
+        action = tool.replace("_", " ") if tool else "that"
+        argument = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        if tool:
+            text = (
+                f"I'm not certain which value you'd like me to use for "
+                f"'{argument}' when I {action}. Could you state it explicitly?"
+                if argument else
+                f"I'm not certain which value you'd like me to use for {action}. "
+                f"Could you confirm the exact setting you have in mind?"
+            )
+        else:
+            text = (
+                "I'm not certain which value you'd like me to use for that. "
+                "Could you confirm the exact setting you have in mind?"
+            )
         return self._finish(ctx, text)
 
     def _respond_invalid_argument(self, ctx: TurnContext, violations: list) -> Action:

@@ -677,5 +677,36 @@ class RelativeRuleTest(unittest.TestCase):
         self.assertEqual(out.calls, [])
 
 
+class BuildSlotQuestionTest(unittest.TestCase):
+    """Fix 2: deterministic fallback question includes tool, argument, options."""
+
+    def test_with_enum_values(self):
+        from track_1_agent_under_test.glassbox.disambiguation import _build_slot_question
+        q = _build_slot_question("set_fan_speed", "level", [0, 1, 2, 3, 4, 5], None)
+        self.assertIn("set fan speed", q)
+        self.assertIn("'level'", q)
+        self.assertIn("0, 1, 2, 3, 4, 5", q)
+
+    def test_with_candidates(self):
+        from track_1_agent_under_test.glassbox.disambiguation import _build_slot_question
+        q = _build_slot_question("open_close_window", "window", None, ["DRIVER", "PASSENGER"])
+        self.assertIn("open close window", q)
+        self.assertIn("'window'", q)
+        self.assertIn("DRIVER", q)
+        self.assertIn("PASSENGER", q)
+
+    def test_bare_fallback(self):
+        from track_1_agent_under_test.glassbox.disambiguation import _build_slot_question
+        q = _build_slot_question("set_climate_temperature", "temperature", None, None)
+        self.assertIn("set climate temperature", q)
+        self.assertIn("'temperature'", q)
+
+    def test_enum_takes_precedence_over_candidates(self):
+        from track_1_agent_under_test.glassbox.disambiguation import _build_slot_question
+        q = _build_slot_question("set_fan_speed", "level", [1, 2, 3], ["A", "B"])
+        self.assertIn("1, 2, 3", q)
+        self.assertNotIn("A, B", q)
+
+
 if __name__ == "__main__":
     unittest.main()

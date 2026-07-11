@@ -468,13 +468,23 @@ class WeatherConfirmationTest(unittest.TestCase):
         self.assertIn("sunroof", pf.confirmations[0].question.lower())
         self.assertIn("rainy", pf.confirmations[0].question.lower())
 
-    def test_fog_thunderstorm_requests_confirmation(self):
+    def test_fog_thunderstorm_no_confirmation(self):
+        # wiki.md:90 — fog confirmation NOT needed for thunderstorm/hail
         ledger = make_ledger()
         observe_weather(ledger, "cloudy_and_thunderstorm")
         c = call("set_fog_lights", {"on": True})
         pf = pre_flight([c], ledger)
-        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
-        self.assertNotIn(c, pf.kept)
+        self.assertEqual(pf.confirmations, [])
+        self.assertEqual(pf.blocked, [])
+
+    def test_fog_hail_no_confirmation(self):
+        # wiki.md:90 — fog confirmation NOT needed for thunderstorm/hail
+        ledger = make_ledger()
+        observe_weather(ledger, "cloudy_and_hail")
+        c = call("set_fog_lights", {"on": True})
+        pf = pre_flight([c], ledger)
+        self.assertEqual(pf.confirmations, [])
+        self.assertEqual(pf.blocked, [])
 
     # --- benign weather → no block (Null-FP!) ---
     def test_benign_weather_sunroof_no_confirmation(self):
@@ -485,12 +495,14 @@ class WeatherConfirmationTest(unittest.TestCase):
         self.assertEqual(pf.confirmations, [])
         self.assertIn(c, pf.kept)
 
-    def test_fog_rainy_no_confirmation(self):
-        # fog gate triggers only on thunderstorm/hail; rainy is benign for fog
+    def test_fog_rainy_requests_confirmation(self):
+        # wiki.md:90 — fog confirmation needed for weather NOT in {thunderstorm, hail}
         ledger = make_ledger()
         observe_weather(ledger, "rainy")
-        pf = pre_flight([call("set_fog_lights", {"on": True})], ledger)
-        self.assertEqual(pf.confirmations, [])
+        c = call("set_fog_lights", {"on": True})
+        pf = pre_flight([c], ledger)
+        self.assertEqual([r.policy_id for r in pf.confirmations], ["LLM-POL:008"])
+        self.assertNotIn(c, pf.kept)
 
     def test_unknown_weather_never_asks(self):
         # Null-FP: no weather observation in the ledger at all
@@ -719,6 +731,69 @@ class FastestRouteNoteTest(unittest.TestCase):
                  {"route_id_leading_to_new_destination": "route_x"})
         pf = pre_flight([c], ledger, _NAV_FULL_INDEX)
         self.assertFalse(any("LLM-POL:022" in n for n in pf.notes))
+
+
+# ---------------------------------------------------------------------------
+# Fix 4 — Confirmation question templates include tool parameters
+# ---------------------------------------------------------------------------
+
+
+class ConfirmationTemplateParamsTest(unittest.TestCase):
+    """Confirmation questions must mention the concrete tool parameters."""
+
+    def test_sunroof_confirmation_includes_percentage(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")
+        c = call("open_close_sunroof", {"percentage": 50})
+        pf = pre_flight([c], ledger)
+        self.assertTrue(pf.confirmations)
+        q = pf.confirmations[0].question
+        self.assertIn("50", q)
+        self.assertIn("sunroof", q.lower())
+
+    def test_fog_lights_confirmation_mentions_action(self):
+        ledger = make_ledger()
+        observe_weather(ledger, "rainy")
+        c = call("set_fog_lights", {"on": True})
+        pf = pre_flight([c], ledger)
+        self.assertTrue(pf.confirmations)
+        q = pf.confirmations[0].question
+        self.assertIn("fog lights", q.lower())
+
+    def test_trunk_door_confirmation_includes_position(self):
+        ledger = make_ledger()
+        c = call("open_close_trunk_door", {"position": "OPEN"})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertTrue(pf.confirmations)
+        q = pf.confirmations[0].question
+        self.assertIn("OPEN", q)
+        self.assertIn("trunk", q.lower())
+
+    def test_high_beams_confirmation_includes_state(self):
+        rc_hb_tools = [
+            {"function": {"name": n,
+                          "description": ("REQUIRES_CONFIRMATION, high beams"
+                                          if n == "set_head_lights_high_beams" else ""),
+                          "parameters": {"properties": {}, "required": []}}}
+            for n in _TOOL_NAMES
+        ]
+        rc_hb_index = CapabilityIndex(rc_hb_tools)
+        ledger = make_ledger()
+        observe(ledger, "get_exterior_lights_status", {"fog_lights": False})
+        c = call("set_head_lights_high_beams", {"on": True})
+        pf = pre_flight([c], ledger, rc_hb_index)
+        self.assertTrue(pf.confirmations)
+        q = pf.confirmations[0].question
+        self.assertIn("on", q.lower())
+
+    def test_email_confirmation_includes_recipient(self):
+        ledger = make_ledger()
+        c = call("send_email", {"recipient": "alice@example.com", "subject": "Hello"})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertTrue(pf.confirmations)
+        q = pf.confirmations[0].question
+        self.assertIn("alice@example.com", q)
+        self.assertIn("Hello", q)
 
 
 if __name__ == "__main__":

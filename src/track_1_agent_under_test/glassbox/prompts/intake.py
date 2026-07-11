@@ -79,10 +79,12 @@ ambiguous when a sensible default reading exists.
 - ambiguity_reason / clarification_question: fill only when is_ambiguous=true; \
 clarification_question must be a single natural, speakable question.
 - value_ambiguities: for each state-changing tool this request will call, list any \
-argument whose value the user did NOT explicitly pin down THIS turn (e.g. "open the \
-sunroof" gives no percentage). Set tool + argument to the exact catalog names and \
-user_stated=false. If the user DID state the value, set user_stated=true (or omit the \
-entry). candidates: only fill when the valid options are a small closed set you can \
+argument whose value the user has NOT explicitly pinned down at any point in the \
+conversation so far (e.g. "open the sunroof" gives no percentage). If the user stated \
+the value in ANY earlier turn — including as the answer to a clarification question — \
+set user_stated=true. Set tool + argument to the exact catalog names and \
+user_stated=false if the value was never stated. If the user DID state the value, set \
+user_stated=true (or omit the entry). candidates: only fill when the valid options are a small closed set you can \
 read from the conversation/tool results — NEVER invent, pick, or rank a value. The \
 value itself is decided later by deterministic code, not here. \
 relative_change: set to "increase" or "decrease" ONLY when the user asks to move a \

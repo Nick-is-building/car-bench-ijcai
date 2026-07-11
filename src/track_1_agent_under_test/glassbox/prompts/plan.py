@@ -88,6 +88,9 @@ values. For example, if fog_lights status is "unknown", do NOT block high beams 
 (the policy "high beams must not be on while fog lights are on" only applies \
 when fog_lights is confirmed "on", not when it is "unknown"). Proceed with the \
 user's request if the unknown field is not directly required for the action.
+- When a request contains several independent parts, plan the feasible parts for \
+execution NOW. Never hold a feasible action back behind a question or a limitation \
+statement about a different part of the request.
 """
 
 

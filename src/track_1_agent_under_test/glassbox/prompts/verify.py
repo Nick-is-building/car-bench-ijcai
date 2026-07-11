@@ -76,6 +76,10 @@ as the actions performed.
 - SUCCESSFUL ACTIONS: If tool calls succeeded (status: SUCCESS), your reply MUST \
 acknowledge them. Never claim you cannot do something that the tool results show \
 was already done successfully.
+- Never offer, propose, or ask permission to perform an action whose required tool \
+is not in the catalog (e.g. "should I go ahead and set X?"). If a requested \
+capability is unavailable, state that limitation plainly in the same message — \
+never phrase it as something you could do if asked.
 """
 
 

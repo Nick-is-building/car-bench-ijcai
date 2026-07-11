@@ -339,7 +339,7 @@ class RequiresConfirmationRule:
     trigger_tool: str
     condition: Callable[[Ledger], bool]    # confirmation required (env precondition holds)?
     confirmed: Callable[[Ledger], bool]    # explicit user confirmation already present?
-    question: Callable[[Ledger], str]      # the Rückfrage to emit when not yet confirmed
+    question: Callable[[Ledger, dict], str]  # (ledger, call_args) → Rückfrage
     when: Callable[[dict], bool] | None = None   # over call args
     description_prefix: str | None = None  # only fire if tool desc starts with this
 
@@ -391,7 +391,7 @@ def _current_day_bound(param_month: str, param_day: str) -> Callable[[dict, Task
 #   sunroof-open  → confirmation UNLESS condition in {sunny, cloudy, partly_cloudy}
 #   fog lights on → confirmation IF condition in {cloudy_and_thunderstorm, cloudy_and_hail}
 _SUNROOF_OK_WEATHER = frozenset({"sunny", "cloudy", "partly_cloudy"})
-_FOG_ADVERSE_WEATHER = frozenset({"cloudy_and_thunderstorm", "cloudy_and_hail"})
+_FOG_NO_CONFIRM_WEATHER = frozenset({"cloudy_and_thunderstorm", "cloudy_and_hail"})
 
 _AFFIRMATIVE_WORDS = frozenset({
     "yes", "yep", "yeah", "yup", "ok", "okay", "confirm", "confirmed",
@@ -450,16 +450,18 @@ def _sunroof_weather_adverse(ledger: Ledger) -> bool:
 
 def _fog_weather_adverse(ledger: Ledger) -> bool:
     cond, _ = _last_weather(ledger)
-    return cond is not None and cond in _FOG_ADVERSE_WEATHER
+    return cond is not None and cond not in _FOG_NO_CONFIRM_WEATHER
 
 
-def _weather_confirmation_question(action: str) -> Callable[[Ledger], str]:
-    def build(ledger: Ledger) -> str:
+def _weather_confirmation_question(action_builder: Callable[[dict], str]) -> Callable[[Ledger, dict], str]:
+    def build(ledger: Ledger, args: dict) -> str:
         cond, _ = _last_weather(ledger)
         shown = (cond or "adverse").replace("_", " ")
+        action_with_params = action_builder(args)
         return (
-            f"The weather at your current location is '{shown}', which requires your "
-            f"confirmation before {action}. Do you want me to proceed anyway?"
+            f"The weather at your current location is '{shown}'. Per policy I need "
+            f"your explicit confirmation before {action_with_params}. "
+            f"Do you want me to proceed?"
         )
     return build
 
@@ -628,7 +630,9 @@ RULES: list[Any] = [
         when=_is_opening_strict,
         condition=_sunroof_weather_adverse,
         confirmed=_weather_confirmed,
-        question=_weather_confirmation_question("opening the sunroof"),
+        question=_weather_confirmation_question(
+            lambda a: f"opening the sunroof to {a.get('percentage', '?')}%"
+        ),
     ),
     RequiresConfirmationRule(
         policy_id="LLM-POL:008",
@@ -636,7 +640,9 @@ RULES: list[Any] = [
         when=_is_on,
         condition=_fog_weather_adverse,
         confirmed=_weather_confirmed,
-        question=_weather_confirmation_question("switching on the fog lights"),
+        question=_weather_confirmation_question(
+            lambda a: "switching on the fog lights"
+        ),
     ),
     # --- LLM-POL:004 — REQUIRES_CONFIRMATION tools (OI-007r) ---
     # description_prefix gate: only fires if the runtime tool description starts
@@ -646,9 +652,10 @@ RULES: list[Any] = [
         trigger_tool="open_close_trunk_door",
         condition=lambda ledger: True,
         confirmed=_rc_tool_confirmed,
-        question=lambda ledger: (
-            "I'd like to operate the trunk door for you. This action requires "
-            "your explicit confirmation before I proceed. Shall I go ahead?"
+        question=lambda ledger, args: (
+            f"I'd like to set the trunk door to position "
+            f"'{args.get('position', '?')}'. This action requires your explicit "
+            f"confirmation before I proceed. Shall I go ahead?"
         ),
         description_prefix="REQUIRES_CONFIRMATION",
     ),
@@ -657,9 +664,10 @@ RULES: list[Any] = [
         trigger_tool="set_head_lights_high_beams",
         condition=lambda ledger: True,
         confirmed=_rc_tool_confirmed,
-        question=lambda ledger: (
-            "I'd like to change the high beam headlights. This action requires "
-            "your explicit confirmation before I proceed. Shall I go ahead?"
+        question=lambda ledger, args: (
+            f"I'd like to set the high beam headlights to "
+            f"{'on' if args.get('on') else 'off'}. This action requires your "
+            f"explicit confirmation before I proceed. Shall I go ahead?"
         ),
         description_prefix="REQUIRES_CONFIRMATION",
     ),
@@ -668,9 +676,10 @@ RULES: list[Any] = [
         trigger_tool="send_email",
         condition=lambda ledger: True,
         confirmed=_rc_tool_confirmed,
-        question=lambda ledger: (
-            "I'd like to send this email for you. This action requires your "
-            "explicit confirmation before I proceed. Shall I go ahead?"
+        question=lambda ledger, args: (
+            f"I'd like to send an email to '{args.get('recipient', '?')}' with "
+            f"subject '{args.get('subject', '?')}'. This action requires your "
+            f"explicit confirmation before I proceed. Shall I go ahead?"
         ),
         description_prefix="REQUIRES_CONFIRMATION",
     ),
@@ -1076,7 +1085,7 @@ def _eval_requires_confirmation(rule: RequiresConfirmationRule, env: _Env) -> No
         env.result.confirmations.append(ConfirmationRequest(
             policy_id=rule.policy_id,
             tool=call.tool,
-            question=rule.question(env.ledger),
+            question=rule.question(env.ledger, call.arguments),
             reason=f"{rule.policy_id}: {call.tool} needs explicit user confirmation "
                    f"under the current weather conditions",
         ))
