@@ -4,6 +4,31 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-11 — AUFTRAG I, Phase I2: Wert-Durchfluss Verifikation
+
+**I1-Fix implementiert (commit f34cc73): deterministischer Wert-Durchfluss-Check.**
+Nach Disambiguation-Auflösung prüft Code, ob der aufgelöste Wert im finalen Tool-Call
+steht. Mismatch → bounded Re-Plan (max 2), dann Force-Correction. 252 Tests grün.
+
+**Verifikationslauf-Config:** 6 Tasks × 3 Trials = 18 Runs.
+Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash, seed 10, Provider anthropic.
+
+**Hypothese pro Task:**
+
+| Task | H-Ergebnis | Erwartet | Begründung |
+|---|---|---|---|
+| dis_20 | 3/3 | 3/3 | H-Fixes + I1-Check = keine Regression |
+| dis_26 | (nicht in H) | 1–2/3 | E2: r_actions=1 aber reward=0 (Policy); I1 ändert Policy-Pfad nicht |
+| dis_32 | 3/3 | 3/3 | Stabil seit H |
+| dis_34 | 2/3 | 2–3/3 | T0-Fail war stochastisch, I1-Check als Sicherheitsnetz |
+| dis_36 | 3/3 | 3/3 | Stabil seit H |
+| dis_0 | 3/3 | 3/3 | Regressionswächter, unberührt |
+
+**Erwarteter Gesamt-Impact:** Keine neuen Gewinne (I1 ist Defense-in-Depth), keine Regression.
+**Kosten-Schätzung:** ~$3–4 (18 Runs × ~$0.15–0.20/Run + Judge).
+
+---
+
 ## 2026-07-11 — AUFTRAG H: Fixrunde H — Verifikationslauf Hypothese
 
 **7 Fixes implementiert (commit 66b116f), 249 Tests grün (nur 2 OI-010 pre-existing).**
