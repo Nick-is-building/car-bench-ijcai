@@ -50,6 +50,62 @@ Deterministische Guards sind der Haupthebel, nicht das LLM — das ist die Paper
 
 **Kosten-Schätzung:** ~$50–55 (54 Runs × ~$0.95/Run mit Caching + Judge).
 
+### Ergebnis Modellvergleich I3 (2026-07-11, Lauf 20260711-182802)
+
+**Config:** 18 Tasks × 3 Trials = 54 Runs, seed 10, ~92 min, Agent claude-opus-4-6.
+**Rohdaten:** `docs/experiments/20260711-182802__track_1_agent_under_test-local_i3_opus_compare__train-trials3-base4ids-hall4ids-dis10ids.json`
+
+| Task | Sonnet (H) | Opus (I3) | Δ | Hypothese | Match? |
+|---|---|---|---|---|---|
+| **Base** | | | | | |
+| base_10 | 3/3 ✓ | 3/3 ✓ | = | 3/3 | ✓ |
+| base_28 | 3/3 ✓ | 0/3 ✗ | **−3** | 3/3 | ✗ |
+| base_30 | 2/3 | 0/3 | −2 | 2–3/3 | ✗ |
+| base_32 | 3/3 ✓ | 3/3 ✓ | = | 3/3 | ✓ |
+| **Hall** | | | | | |
+| hall_10 | 3/3 ✓ | 3/3 ✓ | = | 3/3 | ✓ |
+| hall_16 | 3/3 ✓ | 3/3 ✓ | = | 3/3 | ✓ |
+| hall_28 | 1/3 | 0/3 | −1 | 1–2/3 | ✗ |
+| hall_32 | 1/3 | 1/3 | = | 1–2/3 | ✓ |
+| **Dis** | | | | | |
+| dis_0 | 3/3 ✓ | 3/3 ✓ | = | 3/3 | ✓ |
+| dis_16 | 0/3 | 3/3 ✓ | **+3** | 0–1/3 | ✗ (besser) |
+| dis_18 | 2/3 | 0/3 | −2 | 2–3/3 | ✗ |
+| dis_20 | 3/3 ✓ | 1/3 | **−2** | 3/3 | ✗ |
+| dis_22 | 0/3 | 0/3 | = | 0–1/3 | ✓ |
+| dis_24 | 2/3 | 3/3 ✓ | +1 | 2–3/3 | ✓ |
+| dis_28 | 1/3 | 1/3 | = | 1–2/3 | ✓ |
+| dis_32 | 3/3 ✓ | 2/3 | −1 | 3/3 | ✗ |
+| dis_34 | 2/3 | 3/3 ✓ | +1 | 2–3/3 | ✓ |
+| dis_36 | 3/3 ✓ | 1/3 | **−2** | 3/3 | ✗ |
+
+**Sonnet Pass^3: 9/18 (50%) — Opus Pass^3: 8/18 (44%). Δ = −1 Task.**
+**Hypothese-Trefferquote:** 10/18. Hypothese „Opus ≥ Sonnet" widerlegt.
+
+**Beantwortung der Leitfragen:**
+
+1. **Wo liefert Opus bessere LLM-Entscheidungen?**
+   dis_16 (+3): Opus löst „fan_speed um 1 Level erhöhen" (relative Werte) — Sonnet scheiterte
+   strukturell. dis_24 (+1), dis_34 (+1): bessere INTAKE-Konsistenz auf diesen Tasks.
+
+2. **Wo sind die deterministic Guards der limitierende Faktor?**
+   base_10, base_32, hall_10, hall_16, dis_0: beide Modelle 3/3 — Guard-Logik entscheidet,
+   LLM-Qualität irrelevant. dis_22: 0/3 bei beiden — strukturelle Code-Lücke.
+
+3. **Marginaler Gewinn Opus über Sonnet?**
+   **Negativ.** Opus gewinnt 3 Tasks, verliert aber 4. Die Regressionen (base_28 0/3,
+   dis_20 1/3, dis_36 1/3) zeigen: Opus ist weniger compliant mit den auf Sonnet getunten
+   Prompt-Templates. Besonders base_28: Opus fragt unnötig nach fan_speed_level statt
+   „one level up" direkt auszuführen.
+
+**Fazit für Paper:**
+- **Deterministische Architektur > LLM-Upgrade.** Sonnet + Glassbox schlägt Opus + Glassbox.
+- **Prompt-Engineering ist modellspezifisch.** Auf Sonnet getuntes System verliert mit Opus.
+- **Stärkeres Reasoning hilft punktuell** (dis_16), aber schwächere Prompt-Compliance
+  kostet mehr als das Reasoning gewinnt.
+- **Empfehlung für Wettbewerb:** Bei Sonnet-4-6 bleiben (Glassbox-Architektur auf
+  Sonnet getunt). Opus nur bei modell-agnostischem Re-Tuning der Prompts erwägen.
+
 ---
 
 ## 2026-07-11 — AUFTRAG I, Phase I2: Wert-Durchfluss Verifikation
