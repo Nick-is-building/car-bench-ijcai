@@ -135,6 +135,9 @@ class TurnContext:
     disambiguation_resolved: list = field(default_factory=list)
     # F2: silent-refusal re-plan attempted (bounded to 1)
     silent_refusal_replan: bool = False
+    # I1: value-flow re-plan attempts after disambiguation resolved a value
+    # but the planner substituted a different one (bounded to 2)
+    value_flow_rebuttals: int = 0
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -583,6 +586,54 @@ class StateMachine:
                     tool=call_unc.tool,
                 )
                 return self._respond_provenance_sink(ctx, prov_unc, call_unc)
+
+            # I1: value-throughflow check — the disambiguation cascade resolved
+            # deterministic values; verify the planner hasn't substituted them.
+            if ctx.disambiguation_resolved:
+                mismatches = []
+                for tool, arg, resolved_val in ctx.disambiguation_resolved:
+                    for call in calls:
+                        if call.tool == tool and arg in call.arguments:
+                            if call.arguments[arg] != resolved_val:
+                                mismatches.append((call, arg, resolved_val))
+                if mismatches:
+                    if ctx.value_flow_rebuttals < 2:
+                        ctx.value_flow_rebuttals += 1
+                        for call, arg, correct in mismatches:
+                            ctx.policy_notes.append(
+                                f"VALUE-FLOW: {call.tool}.{arg} must be "
+                                f"{correct!r} (disambiguation-resolved), not "
+                                f"{call.arguments[arg]!r}. Use the correct value."
+                            )
+                        ctx.layer_decisions.append(GuardResult(
+                            verdict="UNCERTAIN",
+                            layer="ValueFlow.check",
+                            reason=f"planner substituted {len(mismatches)} "
+                                   f"disambiguation-resolved value(s) → re-plan",
+                        ))
+                        _log.warning(
+                            "Value-flow violation: planner substituted resolved value",
+                            mismatches=[
+                                (c.tool, a, c.arguments[a], v)
+                                for c, a, v in mismatches
+                            ],
+                            rebuttal=ctx.value_flow_rebuttals,
+                        )
+                        continue
+                    for call, arg, correct in mismatches:
+                        call.arguments[arg] = correct
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="PASS",
+                        layer="ValueFlow.force",
+                        reason=f"rebuttals exhausted — forced {len(mismatches)} "
+                               f"value(s) to disambiguation-resolved",
+                    ))
+                    _log.warning(
+                        "Value-flow: rebuttals exhausted, forcing correct values",
+                        mismatches=[
+                            (c.tool, a, v) for c, a, v in mismatches
+                        ],
+                    )
 
             ctx.transition(State.EXECUTE)
             for call in calls:

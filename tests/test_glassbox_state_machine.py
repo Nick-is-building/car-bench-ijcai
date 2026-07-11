@@ -1405,5 +1405,105 @@ class UnknownFieldCaveatTest(unittest.TestCase):
         self.assertIn("sunny", action.text.lower())
 
 
+class ValueFlowCheckTest(unittest.TestCase):
+    """I1: disambiguation-resolved values must survive to emission."""
+
+    def _ctx_with_provenance(self, *values):
+        """Create a TurnContext whose ledger backs the given numeric values."""
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Adjust the sunshade.")
+        result = json.dumps({"status": "SUCCESS",
+                             "result": {str(v): v for v in values}})
+        ledger.add_tool_call("get_user_preferences", {}, "prov_call")
+        ledger.add_tool_result("get_user_preferences", result, "prov_call")
+        return TurnContext(ledger=ledger, tools=TOOLS, model="fake")
+
+    def test_mismatch_triggers_replan(self):
+        """(a) Resolved value 50, planner sets 100 → re-plan with correction."""
+        intent = Intent(
+            user_request_summary="Adjust the sunshade",
+            required_tools=["open_close_sunshade"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[step("open_close_sunshade", {"percentage": 100})]),
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        machine = StateMachine()
+        ctx = self._ctx_with_provenance(50, 100)
+        ctx.disambiguation_resolved = [("open_close_sunshade", "percentage", 50)]
+
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertEqual(ctx.value_flow_rebuttals, 1)
+        self.assertTrue(any("VALUE-FLOW" in n for n in ctx.policy_notes))
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual(action.calls[0].arguments["percentage"], 50)
+
+    def test_matching_value_passes(self):
+        """(b) Resolved value 50, planner sets 50 → PASS (null FP)."""
+        intent = Intent(
+            user_request_summary="Adjust the sunshade",
+            required_tools=["open_close_sunshade"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[step("open_close_sunshade", {"percentage": 50})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        machine = StateMachine()
+        ctx = self._ctx_with_provenance(50)
+        ctx.disambiguation_resolved = [("open_close_sunshade", "percentage", 50)]
+
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertEqual(ctx.value_flow_rebuttals, 0)
+        self.assertFalse(any("VALUE-FLOW" in n for n in ctx.policy_notes))
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual(action.calls[0].arguments["percentage"], 50)
+
+    def test_no_resolved_value_no_intervention(self):
+        """(c) No resolved value (normal base task) → no intervention."""
+        intent = Intent(
+            user_request_summary="Adjust the sunshade",
+            required_tools=["open_close_sunshade"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[step("open_close_sunshade", {"percentage": 75})]),
+                Plan(steps=[], done_reason="done"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        machine = StateMachine()
+        ctx = self._ctx_with_provenance(75)
+
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+
+        self.assertEqual(ctx.value_flow_rebuttals, 0)
+        self.assertEqual(len(ctx.disambiguation_resolved), 0)
+        self.assertFalse(any("VALUE-FLOW" in n for n in ctx.policy_notes))
+        self.assertIsInstance(action, EmitToolCalls)
+        self.assertEqual(action.calls[0].arguments["percentage"], 75)
+
+
 if __name__ == "__main__":
     unittest.main()
