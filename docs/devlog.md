@@ -4,6 +4,47 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-11 — AUFTRAG H: Fixrunde H — Verifikationslauf Hypothese
+
+**7 Fixes implementiert (commit 66b116f), 249 Tests grün (nur 2 OI-010 pre-existing).**
+
+**Verifikationslauf-Config:** 18 Tasks × 3 Trials = 54 Runs.
+Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash, seed 10, Provider anthropic.
+
+**Hypothese pro Task (erwartetes Ergebnis):**
+
+| Task | Fix(es) | Erwartet | Begründung |
+|---|---|---|---|
+| **Dis-Targets** | | | |
+| dis_16 | Fix 2+3 | 1–2/3 | Slot-Frage jetzt spezifisch, Intake erkennt gestated values |
+| dis_20 | Fix 4 | 1–2/3 | Confirmation nennt jetzt Tool-Parameter |
+| dis_22 | Fix 2+3 | 1–2/3 | Deterministischer Fallback, Konversations-Zeithorizont |
+| dis_28 | Fix 2+3 | 1–2/3 | Fan-Tool-Slot-Frage jetzt spezifisch |
+| dis_32 | Fix 2+3 | 1–2/3 | Prozent-Slot-Frage jetzt mit Enum/Kandidaten |
+| dis_34 | Fix 2+3 | 1–2/3 | Spezifische Frage statt generischem Fallback |
+| dis_36 | Fix 2+3 | 1–2/3 | Deterministischer Fallback bricht Sackgassen-Loop |
+| **Dis-Regression** | | | |
+| dis_0 | — | 3/3 | Präferenz-Auflösung unverändert (Priorität 0 greift vor Fallback) |
+| dis_18 | — | 1–2/3 | Fix 3 hilft (Konversations-Zeithorizont), aber INTAKE-Stochastik bleibt |
+| dis_24 | — | 1–2/3 | Fix 3 hilft bei Wert-Erkennung, Selektion-Regel greift |
+| **Hall-Targets** | | | |
+| hall_10 | Fix 1 | 2–3/3 | Fog-Gate korrigiert, keine falsche Policy-Begründung mehr |
+| hall_28 | Fix 5+6 | 2–3/3 | Keine unmöglichen Aktionen anbieten, machbares zuerst |
+| hall_32 | Fix 5+6 | 2–3/3 | Keine unmöglichen Aktionen anbieten, machbares zuerst |
+| **Hall-Regression** | | | |
+| hall_16 | — | 3/3 | G2-Fix (Unknown-Caveat) unberührt |
+| **Base-Targets** | | | |
+| base_10 | Fix 1 | 2–3/3 | Fog-Gate korrigiert, Wetter-Confirmation korrekt |
+| base_30 | Fix 4 | 2–3/3 | Confirmation-Template nennt Tool-Parameter |
+| base_32 | Fix 2+7 | 1–2/3 | Sink-Templates + Fallback-Frage spezifisch |
+| **Base-Regression** | | | |
+| base_28 | — | 3/3 | F2/F4-Fixes unberührt |
+
+**Erwarteter Gesamt-Impact:** +5–9 Tasks, ~.68 → ~.77–.83.
+**Kosten-Schätzung:** $8–11 (54 Runs × ~$0.15–0.20/Run + Judge-Kosten).
+
+---
+
 ## 2026-07-10 — AUFTRAG G, Phase G5: Ausgewählte OI-Fixes (OI-012, OI-008, OI-007r)
 
 **Scope (nach G4-Priorisierung, Rang 1–3):**
