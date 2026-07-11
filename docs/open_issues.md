@@ -673,3 +673,25 @@ Erwähnung → HALLUCINATION_ERROR).
 - **Wiring** (state_machine.py _verify_and_respond): Gate nach FabricationGuard.sanitize(), vor finalize.
 Tests: 6 neue (causal-link, already-covered, no-overlap-null-FP, no-unknowns, no-executions,
 hall_30-regression). 225 passed / 2 OI-010. Verifikationslauf ausstehend.
+
+**Update Auftrag H (2026-07-11):** hall_32 1/3 (Regression vs. G3-Lauf 2/3), hall_28 1/3
+(gleichbleibend). Fix 5+6 Prompt-Prohibitions greifen stochastisch — LLM-Compliance
+instabil. Kein deterministisches Gate möglich ohne State-Machine-Umbau. Akzeptierte Grenze.
+
+---
+
+## OI-021 — Relative-Value-Disambiguation (dis_16, dis_22: 0/3)
+**Entdeckt:** 2026-07-11 (Auftrag H, Verifikationslauf)  **Stufe:** 6  **Priorität:** niedrig
+
+dis_16 und dis_22 beinhalten Anfragen wie „increase fan speed by one level" — ein relativer
+Wert, kein absoluter. Der Agent fragt wiederholt nach dem exakten Wert für `speed_level`,
+die User-Sim kann keinen absoluten Wert nennen → Sackgassen-Loop bis max_steps.
+
+Fix 2 (spezifische Slot-Frage mit Enum-Values) greift hier NICHT, weil kein Enum-Eintrag
+den relativen Ansatz „eins höher" abdeckt. Fix 3 (Konversations-Zeithorizont) hilft nicht,
+weil der User den Wert auch in früheren Turns nie explizit nennt.
+
+**Potentieller Fix:** Die `_RELATIVE_VALUE_RULES` aus OI-018 könnten erweitert werden, um
+relative Änderungen generisch zu erkennen (INTAKE müsste `relative_change` zuverlässig
+flaggen). Aufwand: mittel, Regressionsrisiko mittel (INTAKE-Stochastik). Impact: +0-2 Tasks.
+**Empfehlung:** akzeptieren bis 19. Juli — Ertrag zu gering für das Risiko.

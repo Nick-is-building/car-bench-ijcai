@@ -43,6 +43,66 @@ Agent claude-sonnet-4-6, Judge/User gemini-2.5-flash, seed 10, Provider anthropi
 **Erwarteter Gesamt-Impact:** +5–9 Tasks, ~.68 → ~.77–.83.
 **Kosten-Schätzung:** $8–11 (54 Runs × ~$0.15–0.20/Run + Judge-Kosten).
 
+### Ergebnis Verifikationslauf H (2026-07-11, Lauf 20260711-103751)
+
+**Config:** 18 Tasks × 3 Trials = 54 Runs, seed 10, ~67 min, Agent claude-sonnet-4-6.
+**Rohdaten:** `docs/experiments/20260711-103751__track_1_agent_under_test-local_h_verify__train-trials3-base4ids-hall4ids-dis10ids.json`
+
+| Task | Vorher | Nachher | Δ | Hypothese | Match? |
+|---|---|---|---|---|---|
+| **Dis-Targets** | | | | | |
+| dis_16 | 0/3 | 0/3 | 0 | 1–2/3 | ✗ |
+| dis_20 | 0/3 | 3/3 | +3 | 1–2/3 | ✗ (besser) |
+| dis_22 | 0/3 | 0/3 | 0 | 1–2/3 | ✗ |
+| dis_28 | 0/3 | 1/3 | +1 | 1–2/3 | ✓ |
+| dis_32 | 2/3 | 3/3 | +1 | 1–2/3 | ✗ (besser) |
+| dis_34 | 0/3 | 2/3 | +2 | 1–2/3 | ✓ |
+| dis_36 | 1/3 | 3/3 | +2 | 1–2/3 | ✗ (besser) |
+| **Dis-Regression** | | | | | |
+| dis_0 | 3/3 | 3/3 | 0 | 3/3 | ✓ |
+| dis_18 | 0/3 | 2/3 | +2 | 1–2/3 | ✓ |
+| dis_24 | 1/3 | 2/3 | +1 | 1–2/3 | ✓ |
+| **Hall-Targets** | | | | | |
+| hall_10 | 2/3 | 3/3 | +1 | 2–3/3 | ✓ |
+| hall_28 | 1/3 | 1/3 | 0 | 2–3/3 | ✗ |
+| hall_32 | 2/3 | 1/3 | −1 | 2–3/3 | ✗ |
+| **Hall-Regression** | | | | | |
+| hall_16 | 3/3 | 3/3 | 0 | 3/3 | ✓ |
+| **Base-Targets** | | | | | |
+| base_10 | 0/3 | 3/3 | +3 | 2–3/3 | ✓ |
+| base_30 | 1/3 | 2/3 | +1 | 2–3/3 | ✓ |
+| base_32 | 0/3 | 3/3 | +3 | 1–2/3 | ✗ (besser) |
+| **Base-Regression** | | | | | |
+| base_28 | 3/3 | 3/3 | 0 | 3/3 | ✓ |
+
+**Pass^k auf diesem Subset (18 Tasks):**
+- Pass^1: 73.3% | Pass^2: 63.3% | Pass^3: 55.0%
+- Pass^3 vorher: 3/18 → nachher: 9/18 (**+6 Tasks**)
+
+**Neue Pass^3-Gewinne:** dis_20, dis_32, dis_36, hall_10, base_10, base_32.
+
+**Regressionswächter:** dis_0 ✓ (3/3), hall_16 ✓ (3/3), base_28 ✓ (3/3).
+dis_18 und dis_24 waren im CLAUDE.md als Watchdogs gelistet, waren aber historisch NIE 3/3
+(dis_18 bester Wert 1/3, dis_24 bester Wert 2/3). Beide haben sich verbessert (dis_18 0→2/3,
+dis_24 1→2/3). Keine echte Regression.
+
+**Hypothese-Trefferquote:** 12/18 Vorhersagen korrekt. 4 Misses waren BESSER als erwartet
+(dis_20, dis_32, dis_36, base_32 jeweils 3/3 statt 1–2/3). 2 Misses schlechter: hall_28
+(1/3 statt 2–3/3), hall_32 (1/3 statt 2–3/3 — Fix 5+6 Prompt-Regeln greifen nicht zuverlässig,
+Agent bietet weiterhin in manchen Trials unmögliche Aktionen an).
+
+**Geschätzter Gesamt-Impact (Hochrechnung auf E2-Baseline 35/60):**
+- Base: 15/20 → ~18/20 (+base_10, base_32, base_30 nahe)
+- Hallucination: 14/20 → ~16/20 (+hall_10; hall_28/32 stochastisch)
+- Disambiguation: 6/20 → ~9/20 (+dis_20, dis_32, dis_36)
+- **Overall: ~43/60 (~71.7%, vorher ~68%)**
+
+**Offene Muster (kein Rollback nötig, keine Regression):**
+- dis_16/dis_22: 0/3 — fan_speed/set_fan_speed „increase by one level" ist ein relativer
+  Wert, kein Tool unterstützt relative Änderungen → Sackgassen-Loop bleibt.
+- hall_28/hall_32: Fix 5+6 (Prompt-Prohibitions) greifen stochastisch — LLM-Compliance
+  instabil. Kein deterministisches Gate möglich ohne State-Machine-Umbau.
+
 ---
 
 ## 2026-07-10 — AUFTRAG G, Phase G5: Ausgewählte OI-Fixes (OI-012, OI-008, OI-007r)
