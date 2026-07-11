@@ -1,0 +1,34 @@
+# Auftrag J — Verifikationslauf (Fixes J1+J2: Airflow-Merge, Slot-Normalisierung,
+# relative_steps, relationale Rückfrage).
+# 9 Tasks × 3 Trials = 27 Runs, geschätzt $4-5.
+#
+# Dis-Targets:  dis_16 (relationale Rückfrage), dis_22 (Airflow-Merge),
+#               dis_28 (Slot-Normalisierung + relative_steps)
+# Dis-Regression: dis_6 (explizites WINDSHIELD via User-Value-Flow),
+#                 dis_18, dis_24 (Slot-Flagging/Kaskade, flaky 2/3)
+# Base-Regression: base_8 (explizites WINDSHIELD)
+# Hall-Regression: hall_28, hall_36 (Refusal-Pfad — relationales Gate darf NICHT feuern,
+#                  INTAKE-Prompt-Änderung darf Refusals nicht kippen)
+#
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/j_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_j_verify.toml \
+#      > _local/runs/j_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_8"]
+tasks_disambiguation_task_id_filter = ["disambiguation_6", "disambiguation_16", "disambiguation_18", "disambiguation_22", "disambiguation_24", "disambiguation_28"]
+tasks_hallucination_task_id_filter = ["hallucination_28", "hallucination_36"]
+seed = 10
+max_steps = 50

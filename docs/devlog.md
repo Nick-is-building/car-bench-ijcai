@@ -2515,3 +2515,24 @@ dis_16 0/3 → Rückfrage-Pfad erreichbar (Flip abhängig von User-Sim-Antwort, 
 1-2/3). Regressionsrisiko: klein — Normalisierung greift nur bei sonst verlorenen Slots,
 relative_steps nur bei explizit genannter Zahl, relationales Gate nur bei relationalem
 Verb + Objekt-Überlappung.
+
+## Phase J3 — Verifikationslauf J1+J2 (Hypothese, VOR dem Lauf committet)
+
+**Datum:** 2026-07-11  **Config:** `local_j_verify.toml`, 9 Tasks × 3 Trials = 27 Runs,
+seed 10, Agent sonnet-4-6, Judge/User gemini-2.5-flash. Freigabe erteilt (Schätzung $4-5).
+
+**Hypothesen:**
+1. **dis_22: 0/3 → 3/3.** Airflow-Merge offline gegen echte Hash-Kette verifiziert;
+   der Rest der Trajektorie war bereits GT-identisch. Höchste Konfidenz.
+2. **dis_28: 1/3 → 3/3.** Slot-Normalisierung macht Lookup+Injektion deterministisch;
+   relative_steps=2 liefert die korrekte Magnitude. Restrisiko: INTAKE-Stochastik
+   beim Flaggen selbst (nicht beim Namen).
+3. **dis_16: 0/3 → 1-2/3.** Refusal → gezielte Rückfrage; Flip hängt an der
+   User-Sim-Antwort und dem anschließenden Wert-Durchfluss (25 % beide Fondfenster).
+4. **Keine Regressionen:** dis_6/base_8 (explizites WINDSHIELD läuft über User-Value-Flow,
+   nicht über die Companion-Rule), dis_18/dis_24 (≥2/3 wie bisher, Normalisierung greift
+   nur bei sonst verlorenen Slots), hall_28/hall_36 (Refusals unverändert — relationales
+   Gate feuert nicht bei Standard-Verben).
+
+**Abbruchkriterium:** Regressiert ein Hall-Task auf 0/3 oder dis_6/base_8 unter 3/3,
+gilt der jeweilige Fix als zu breit und wird enger gegated statt nachjustiert.
