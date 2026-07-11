@@ -263,7 +263,9 @@ class CompanionSpec:
     state_field: str
     needs: Callable[[Any], bool]        # known value → companion call required?
     companion_tool: str
-    companion_args: dict
+    # dict = statische Args; Callable erhält den beobachteten Feldwert und
+    # liefert wertabhängige Args (z. B. AUT-POL:010 Airflow-Merge)
+    companion_args: dict | Callable[[Any], dict]
     inject_when_unknown: bool = False   # True: inject without observing (safe/idempotent)
 
 
@@ -360,6 +362,22 @@ def _is_opening_strict(a: dict) -> bool:
 
 def _is_on(a: dict) -> bool:
     return a.get("on") is True
+
+
+# AUT-POL:010: "direction does not include WINDSHIELD" → WINDSHIELD wird zur
+# aktuellen Richtung ERGÄNZT, nicht hart gesetzt (GT dis_22: FEET → WINDSHIELD_FEET;
+# hartes WINDSHIELD gilt nur bei explizitem User-Wunsch, der läuft nicht über
+# diese Companion-Rule).
+_AIRFLOW_ADD_WINDSHIELD = {
+    "FEET": "WINDSHIELD_FEET",
+    "HEAD": "WINDSHIELD_HEAD",
+    "HEAD_FEET": "WINDSHIELD_HEAD_FEET",
+}
+
+
+def _airflow_merge_windshield(value: Any) -> dict:
+    current = str(value).strip().upper().rsplit(".", 1)[-1]
+    return {"direction": _AIRFLOW_ADD_WINDSHIELD.get(current, "WINDSHIELD")}
 
 
 def _weather_args(tc: TaskContext) -> dict | None:
@@ -716,7 +734,7 @@ RULES: list[Any] = [
                 state_field="fan_airflow_direction",
                 needs=lambda v: "WINDSHIELD" not in str(v),
                 companion_tool="set_fan_airflow_direction",
-                companion_args={"direction": "WINDSHIELD"},
+                companion_args=_airflow_merge_windshield,
             ),
             CompanionSpec(
                 state_field="air_conditioning",
@@ -1045,7 +1063,11 @@ def _eval_state_companion(rule: StateCompanionRule, env: _Env) -> None:
                     f"{spec.companion_tool}, which is not available in this car.",
                 ))
                 return
-            env.inject(spec.companion_tool, dict(spec.companion_args), rule.policy_id,
+            companion_args = (
+                spec.companion_args(value) if callable(spec.companion_args)
+                else dict(spec.companion_args)
+            )
+            env.inject(spec.companion_tool, companion_args, rule.policy_id,
                        f"{rule.policy_id}: injected companion "
                        f"{spec.companion_tool} for {call.tool}")
             projected = env.projected()

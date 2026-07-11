@@ -364,6 +364,46 @@ class StateCompanionTest(unittest.TestCase):
                         ledger, index_without("set_fan_speed"))
         self.assertIn("AUT-POL:011", policy_ids(pf.missing_capability))
 
+    # --- AUT-POL:010 airflow merge: WINDSHIELD wird ERGÄNZT, nicht hart gesetzt ---
+
+    def _defrost_pf(self, climate: dict):
+        ledger = make_ledger()
+        observe(ledger, "get_climate_settings", climate)
+        c = call("set_window_defrost", {"defrost_window": "FRONT", "on": True})
+        return pre_flight([c], ledger), c
+
+    def test_defrost_merges_windshield_into_feet(self):
+        pf, c = self._defrost_pf({"fan_speed": 2, "fan_airflow_direction": "FEET",
+                                  "air_conditioning": True})
+        self.assertEqual([(i.tool, i.arguments) for i in pf.injected],
+                         [("set_fan_airflow_direction",
+                           {"direction": "WINDSHIELD_FEET"})])
+        self.assertEqual(pf.kept, [c])
+
+    def test_defrost_merges_windshield_into_head_feet(self):
+        pf, _ = self._defrost_pf({"fan_speed": 2,
+                                  "fan_airflow_direction": "HEAD_FEET",
+                                  "air_conditioning": True})
+        self.assertEqual([(i.tool, i.arguments) for i in pf.injected],
+                         [("set_fan_airflow_direction",
+                           {"direction": "WINDSHIELD_HEAD_FEET"})])
+
+    def test_defrost_no_airflow_injection_when_windshield_included(self):
+        pf, c = self._defrost_pf({"fan_speed": 2,
+                                  "fan_airflow_direction": "WINDSHIELD_HEAD",
+                                  "air_conditioning": True})
+        self.assertEqual(pf.injected, [])
+        self.assertEqual(pf.kept, [c])
+
+    def test_airflow_merge_unknown_value_falls_back_to_windshield(self):
+        from track_1_agent_under_test.glassbox.policies import (
+            _airflow_merge_windshield,
+        )
+        self.assertEqual(_airflow_merge_windshield("SOMETHING_ELSE"),
+                         {"direction": "WINDSHIELD"})
+        self.assertEqual(_airflow_merge_windshield(None),
+                         {"direction": "WINDSHIELD"})
+
 
 # ---------------------------------------------------------------------------
 # no_parallel — AUT-POL:018 waypoint edits strictly sequential

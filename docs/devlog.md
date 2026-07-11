@@ -2436,3 +2436,41 @@ die verfügbare Tools benennt. Feuert nur wenn: (a) keine Steps, (b) kein capabi
 (c) INTAKE required_tools im Katalog, (d) keine bisherigen Executions, (e) keine bisherigen
 Capability-Rebuttals. Deterministisch, Lesson-1a-konform. 3 Fake-Tests (inkl. Null-FP).
 Verifikationslauf ausstehend (Cost-Gate).
+
+---
+
+## Phase J1 — dis_22 Root Cause: AUT-POL:010 Airflow-Merge (offline verifiziert)
+
+**Datum:** 2026-07-11  **Stufe:** PolicyChecker (StateCompanionRule)  **Bezug:** Auftrag J (Dis-Durchbruch)
+
+**Hypothese vor der Analyse:** dis_22 (0/3, alle Subscores 1.0 außer r_actions_final/
+intermediate=0) hat eine Wert- oder Hash-Divergenz trotz scheinbar korrekter Trajektorie.
+
+**Root Cause (offline reproduziert, 0 API-Kosten, `_local/diag_dis22.py`):**
+Die Agent-Sequenz war NICHT identisch mit GT: Der AUT-POL:010-Companion injiziert hart
+`set_fan_airflow_direction(direction=WINDSHIELD)`. GT bei init `fan_airflow_direction=FEET`
+erwartet aber `WINDSHIELD_FEET` — die Wiki-Formulierung "Set the fan airflow direction to
+WINDSHIELD if the current direction does not include WINDSHIELD" meint ERGÄNZEN, nicht
+ersetzen. GT-Quervergleich über alle Experiment-JSONs bestätigt die Semantik-Trennung:
+- Companion-Kontext (dis_22, defrost-getriggert): FEET → WINDSHIELD_FEET (erhaltend)
+- Expliziter User-Wunsch (base_8, dis_6, "directed to the windshield"): hart WINDSHIELD
+  — läuft bei uns über den User-Value-Flow, NICHT über die Companion-Rule → kein Konflikt.
+
+**Nebenbefund Evaluator-Mechanik:** `steps()` zeichnet State-Hashes nur pro TURN auf
+(beim respond), nicht pro Tool-Call — Companion-Reihenfolge innerhalb eines Batches ist
+für r_actions_intermediate irrelevant. Nur der WERT zählt.
+
+**Offline-Verifikation:** Replay der Agent-Sequenz mit echten Env-Tools + echter Hash-Kette:
+alt (WINDSHIELD) → final==GT False; fix (WINDSHIELD_FEET) → final==GT True, intermediate
+subset True. Erwarteter Flip: dis_22 0/3 → 3/3 (deterministischer Pfad).
+
+**Fix (Lesson-1a-konform, rein deterministisch):**
+- `CompanionSpec.companion_args` akzeptiert jetzt `dict | Callable[[value], dict]`
+- `_airflow_merge_windshield`: FEET→WINDSHIELD_FEET, HEAD→WINDSHIELD_HEAD,
+  HEAD_FEET→WINDSHIELD_HEAD_FEET, sonst Fallback WINDSHIELD
+- 4 neue Fake-Tests (Merge FEET, Merge HEAD_FEET, Null-FP bei enthaltenem WINDSHIELD,
+  Fallback) — 256 Tests grün (2 vorbestehende OI-010-Fails unverändert).
+
+**Regressionsrisiko:** minimal — Rule feuert nur bei set_window_defrost(FRONT/ALL, on)
+UND Richtung ohne WINDSHIELD; alle bekannten GT-Tasks mit hartem WINDSHIELD sind
+direkte User-Wünsche ohne Defrost-Trigger.
