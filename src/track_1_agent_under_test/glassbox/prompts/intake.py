@@ -27,6 +27,9 @@ class ValueAmbiguity(BaseModel):
     # Set only for an up/down adjustment with no target value ("increase a bit");
     # code derives the resulting number from the current value. NEVER guess it here.
     relative_change: Optional[Literal["increase", "decrease"]] = None
+    # Number of steps the user EXPLICITLY stated ("by two levels" → 2);
+    # null when no count was stated. Extraction only — code applies it.
+    relative_steps: Optional[int] = None
 
 
 class Intent(BaseModel):
@@ -90,7 +93,10 @@ value itself is decided later by deterministic code, not here. \
 relative_change: set to "increase" or "decrease" ONLY when the user asks to move a \
 numeric value up or down without naming a target ("turn the fan up a bit", "lower it \
 by one"); leave null otherwise. Never compute the resulting number — code derives it \
-from the current reading.
+from the current reading. \
+relative_steps: only together with relative_change, and ONLY when the user explicitly \
+stated a count of steps ("by two levels" → 2, "lower it by one" → 1); leave null when \
+no count was stated ("a bit", "more air"). Never invent or infer a count.
 
 # Prohibitions
 - Never list a tool name that is not literally in the catalog.

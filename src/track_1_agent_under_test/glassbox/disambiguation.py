@@ -168,6 +168,36 @@ def _coerce(value: str, sample: object) -> object:
     return text
 
 
+def _normalize_slot_argument(index, tool: str, argument: str) -> str | None:
+    """Deterministically map an LLM-flagged slot name to the tool's schema
+    argument name (OI-018: INTAKE flags e.g. 'fan_speed_level' for schema arg
+    'level', which breaks rule lookup AND value injection).
+
+    Cascade: exact → case-insensitive → UNIQUE token-subset/substring match.
+    Returns None when no unique match exists — the caller then keeps the old
+    conservative skip behavior (Null-FP: never guess between two candidates).
+    """
+    if index.has_parameter(tool, argument):
+        return argument
+    cap = index.get_tool(tool)
+    if cap is None or not cap.parameters:
+        return None
+    low = argument.strip().lower()
+    ci = [p for p in cap.parameters if p.lower() == low]
+    if len(ci) == 1:
+        return ci[0]
+    flagged_tokens = set(low.split("_"))
+
+    def _token_match(param: str) -> bool:
+        p = param.lower()
+        return (set(p.split("_")) <= flagged_tokens
+                or flagged_tokens <= set(p.split("_"))
+                or p in low or low in p)
+
+    matched = [p for p in cap.parameters if _token_match(p)]
+    return matched[0] if len(matched) == 1 else None
+
+
 def _build_slot_question(tool: str, argument: str, enum_values, candidates) -> str:
     action = tool.replace("_", " ")
     if enum_values:
@@ -280,6 +310,14 @@ class DisambiguationEngine:
             new_args = dict(call.arguments)
             for slot in slots:
                 arg = slot["argument"]
+                normalized = _normalize_slot_argument(index, call.tool, arg)
+                if normalized is not None and normalized != arg:
+                    _log.info(
+                        "Disambiguation: slot argument normalized to schema name",
+                        tool=call.tool, argument=arg, normalized=normalized,
+                    )
+                    arg = normalized
+                    slot = {**slot, "argument": normalized}
                 # Priority 4 (ledger-derived): a rule computes the value from an
                 # earlier tool result. Runs BEFORE the pref/heuristic cascade so a
                 # fastest-route / relative-step slot resolves silently instead of
@@ -393,7 +431,8 @@ class DisambiguationEngine:
         rel = _RELATIVE_VALUE_RULES.get((call.tool, arg))
         if rel is not None:
             return self._apply_relative(
-                ctx, rel, slot.get("relative_change"), index, call.tool, arg)
+                ctx, rel, slot.get("relative_change"), index, call.tool, arg,
+                steps=slot.get("relative_steps"))
         return None
 
     def _select_by_minimum(self, ctx, rule: "_SelectionRule"):
@@ -418,7 +457,8 @@ class DisambiguationEngine:
 
         return min(cands, key=_key)[rule.id_field]
 
-    def _apply_relative(self, ctx, rule: "_RelativeRule", direction, index, tool, arg):
+    def _apply_relative(self, ctx, rule: "_RelativeRule", direction, index, tool, arg,
+                        steps=None):
         if direction not in ("increase", "decrease"):
             return None
         result = self._latest_result(ctx, rule.source_tool)
@@ -427,7 +467,10 @@ class DisambiguationEngine:
         current = result.get(rule.current_field)
         if not isinstance(current, (int, float)) or isinstance(current, bool):
             return None
-        step = rule.step if direction == "increase" else -rule.step
+        # User-stated magnitude ("by two levels") from INTAKE; default one step.
+        magnitude = (steps if isinstance(steps, int) and not isinstance(steps, bool)
+                     and steps > 0 else rule.step)
+        step = magnitude if direction == "increase" else -magnitude
         value = int(current) + step
         low, high = self._numeric_bounds(index, tool, arg)
         if isinstance(low, (int, float)):

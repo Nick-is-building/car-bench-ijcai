@@ -220,6 +220,19 @@ class StateMachine:
             reason=ctx.capability_result,
         ))
         if ctx.capability_result == "uncovered":
+            # OI-022: a RELATIONAL compound request ("sync the windows") is a
+            # disambiguation case, not a missing capability — ask ONE targeted
+            # question instead of refusing (deterministic gate, Lesson 1a).
+            question = self._relational_request_clarification(ctx)
+            if question is not None:
+                _log.info(
+                    "CAPABILITY: relational compound request — clarifying instead of refusing",
+                    source="intake",
+                    intent_missing=ctx.intent.get("required_but_missing_tools", []),
+                )
+                ctx.transition(State.CLARIFY)
+                ctx.clarification_question = question
+                return self._finish(ctx, question)
             ctx.capability_refusal_source = "intake"
             _log.warning(
                 "Refusal: intake capability check uncovered",
@@ -809,6 +822,54 @@ class StateMachine:
             question = f"Just to make sure I get this right: could you clarify {reason}?"
         ctx.clarification_question = question
         return self._finish(ctx, question)
+
+    _RELATIONAL_VERBS = frozenset({
+        "sync", "synchronize", "synchronise", "match", "align", "mirror",
+        "copy", "equalize", "equalise", "harmonize", "harmonise",
+    })
+
+    def _relational_request_clarification(self, ctx: TurnContext) -> str | None:
+        """OI-022: a compound request named with a RELATIONAL verb ("sync the
+        window positions") that no single tool covers is under-specified, not
+        impossible — the state can be reached with individual setter calls.
+
+        Deterministic gate, hallucination-safe by construction: fires ONLY when
+        (a) EVERY unknown tool name starts with a relational verb — hallucination
+        tasks remove REAL tools whose names keep standard verbs (set_/open_/
+        get_…) and therefore still take the honest-refusal path — and (b) at
+        least one non-getter catalog tool shares an object token with the
+        unknown name (the request is actually expressible). Returns the one
+        targeted question, or None → normal refusal.
+        """
+        from .capability import CapabilityIndex
+
+        idx = CapabilityIndex(ctx.tools)
+        unknown = [
+            t for t in dict.fromkeys(
+                list(ctx.intent.get("required_but_missing_tools") or [])
+                + list(ctx.intent.get("required_tools") or [])
+            )
+            if t and not idx.has_tool(t)
+        ]
+        if not unknown:
+            return None
+        for name in unknown:
+            tokens = [tok for tok in name.lower().split("_") if tok]
+            if not tokens or tokens[0] not in self._RELATIONAL_VERBS:
+                return None
+            objects = set(tokens[1:])
+            expressible = any(
+                not c.startswith("get_") and (set(c.lower().split("_")) & objects)
+                for c in idx.tool_names
+            )
+            if not expressible:
+                return None
+        subject = " ".join(tok for tok in unknown[0].lower().split("_") if tok)
+        return (
+            f"I don't have a single function to {subject}, but I can adjust "
+            f"each setting individually. Could you tell me exactly which ones "
+            f"you'd like me to change, and to what position or value?"
+        )
 
     def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall], matcher):
         from .policies import PolicyChecker

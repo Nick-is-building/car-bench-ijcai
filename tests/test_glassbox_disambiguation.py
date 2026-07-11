@@ -302,12 +302,13 @@ class ResolverSchemaGuardTest(unittest.TestCase):
     def setUp(self):
         self.eng = DisambiguationEngine()
 
-    def test_invented_slot_name_is_not_injected(self):
-        # planner already drafted the schema-correct lightcolor; the resolver
-        # tries to inject under the invented name "color" → must be skipped.
+    def test_invented_slot_name_is_normalized_to_schema_name(self):
+        # OI-018: the invented name "color" maps UNIQUELY to schema param
+        # "lightcolor" → the resolved value flows under the SCHEMA name
+        # (was: conservative skip; skip remains only for non-unique matches).
         call = PlannedCall(
             tool="set_ambient_lights",
-            arguments={"on": True, "lightcolor": "PURPLE"},
+            arguments={"on": True, "lightcolor": "RED"},  # placeholder
             call_id="c1",
         )
         ctx = _ctx({"is_state_changing": True,
@@ -318,10 +319,34 @@ class ResolverSchemaGuardTest(unittest.TestCase):
         out = self.eng.pre_flight(
             ctx, [call], extractor=lambda c, t, a: PreferenceSlot(default="PURPLE"))
         self.assertEqual(len(out.calls), 1)
-        self.assertNotIn("color", out.calls[0].arguments)  # invented name dropped
-        self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")  # untouched
+        self.assertNotIn("color", out.calls[0].arguments)  # never a non-schema arg
+        self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")
         self.assertEqual(out.calls[0].arguments["on"], True)
-        self.assertEqual(out.resolved, [])  # nothing injected
+        self.assertEqual(out.resolved,
+                         [("set_ambient_lights", "lightcolor", "PURPLE")])
+
+    def test_non_unique_slot_name_still_skipped_null_fp(self):
+        # A flagged name matching TWO schema params must never guess: the
+        # resolved value is dropped, the planner's own args stay untouched.
+        schema = [{"function": {
+            "name": "set_two_zones",
+            "description": "",
+            "parameters": {
+                "properties": {"zone_front": {"type": "string"},
+                               "zone_rear": {"type": "string"}},
+                "required": [],
+            },
+        }}]
+        call = PlannedCall(tool="set_two_zones", arguments={}, call_id="c1")
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [_amb(tool="set_two_zones",
+                                               argument="zone")]},
+                   prefs_in_ledger=True)
+        ctx.tools = schema
+        out = self.eng.pre_flight(
+            ctx, [call], extractor=lambda c, t, a: PreferenceSlot(default="FRONT"))
+        self.assertEqual(out.calls[0].arguments, {})
+        self.assertEqual(out.resolved, [])
 
     def test_valid_schema_slot_still_injected_null_fp(self):
         # regression: a slot flagged under the real schema name resolves normally.
@@ -340,6 +365,75 @@ class ResolverSchemaGuardTest(unittest.TestCase):
         self.assertEqual(out.calls[0].arguments["lightcolor"], "PURPLE")
         self.assertEqual(out.resolved,
                          [("set_ambient_lights", "lightcolor", "PURPLE")])
+
+
+FAN_SCHEMA = [{"function": {
+    "name": "set_fan_speed",
+    "description": "Set the fan speed level.",
+    "parameters": {
+        "properties": {"level": {"type": "number", "minimum": 0, "maximum": 5}},
+        "required": ["level"],
+    },
+}}]
+
+
+class RelativeValueFlowTest(unittest.TestCase):
+    """dis_28 chain (OI-018 + relative magnitude): INTAKE flags the slot under
+    'fan_speed_level' with relative_change/steps; normalization + the relative
+    rule must resolve current+steps and inject it under the schema name."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+
+    def _fan_ctx(self, slot_extra: dict, current: float = 0):
+        ctx = _ctx({"is_state_changing": True,
+                    "value_ambiguities": [
+                        {**_amb(tool="set_fan_speed", argument="fan_speed_level"),
+                         **slot_extra}]},
+                   prefs_in_ledger=True)
+        ctx.tools = FAN_SCHEMA
+        ctx.ledger.add_tool_result(
+            "get_climate_settings",
+            json.dumps({"status": "SUCCESS",
+                        "result": {"fan_speed": current,
+                                   "fan_airflow_direction": "FEET"}}),
+            "call_climate0",
+        )
+        return ctx
+
+    def test_flagged_name_normalized_and_relative_steps_applied(self):
+        ctx = self._fan_ctx({"relative_change": "increase", "relative_steps": 2},
+                            current=0)
+        call = PlannedCall(tool="set_fan_speed", arguments={}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call],
+                                  extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.calls[0].arguments, {"level": 2})
+        self.assertEqual(out.resolved, [("set_fan_speed", "level", 2)])
+        self.assertEqual(out.question, "")  # never a clarification loop
+
+    def test_relative_without_steps_defaults_to_one(self):
+        ctx = self._fan_ctx({"relative_change": "increase"}, current=1)
+        call = PlannedCall(tool="set_fan_speed", arguments={}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call],
+                                  extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.calls[0].arguments, {"level": 2})
+
+    def test_relative_steps_clamped_to_schema_maximum(self):
+        ctx = self._fan_ctx({"relative_change": "increase", "relative_steps": 9},
+                            current=3)
+        call = PlannedCall(tool="set_fan_speed", arguments={}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call],
+                                  extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.calls[0].arguments, {"level": 5})
+
+    def test_null_fp_invalid_steps_type_falls_back_to_one_step(self):
+        ctx = self._fan_ctx({"relative_change": "decrease",
+                             "relative_steps": True},  # bool is not a count
+                            current=3)
+        call = PlannedCall(tool="set_fan_speed", arguments={}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call],
+                                  extractor=lambda c, t, a: PreferenceSlot())
+        self.assertEqual(out.calls[0].arguments, {"level": 2})
 
 
 # ---------------------------------------------------------------------------

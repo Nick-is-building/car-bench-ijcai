@@ -1505,5 +1505,115 @@ class ValueFlowCheckTest(unittest.TestCase):
         self.assertEqual(action.calls[0].arguments["percentage"], 75)
 
 
+WINDOW_TOOLS = [
+    {"function": {
+        "name": "get_vehicle_window_positions",
+        "description": "Read all window positions.",
+        "parameters": {"properties": {}, "required": []},
+    }},
+    {"function": {
+        "name": "open_close_window",
+        "description": "Open or close a window.",
+        "parameters": {"properties": {"window": {"type": "string"},
+                                      "percentage": {"type": "number"}},
+                       "required": ["window", "percentage"]},
+    }},
+]
+
+
+class RelationalRequestClarificationTest(unittest.TestCase):
+    """OI-022 (dis_16): relational compound requests ("sync the windows") get one
+    targeted clarification instead of a capability refusal — but ONLY behind the
+    deterministic relational-verb gate, so hallucination tasks stay refusals."""
+
+    def _ctx(self, intent: Intent, tools=WINDOW_TOOLS) -> TurnContext:
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Sync the rear windows with each other.")
+        ctx = TurnContext(ledger=ledger, tools=tools, model="fake")
+        ctx.intent = intent.model_dump()
+        return ctx
+
+    def test_relational_unknown_tool_yields_targeted_question(self):
+        """sync_window_positions is hallucinated, but open_close_window shares
+        the object token → ask which settings to change, do not refuse."""
+        intent = Intent(
+            user_request_summary="Sync the rear window positions",
+            required_but_missing_tools=["sync_window_positions"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        question = StateMachine()._relational_request_clarification(self._ctx(intent))
+        self.assertIsNotNone(question)
+        self.assertIn("sync window positions", question)
+        self.assertIn("individually", question)
+
+    def test_standard_verb_unknown_tool_stays_refusal_null_fp(self):
+        """Hallucination-safety: a removed REAL tool keeps its standard verb
+        (set_...) → gate must NOT fire, honest refusal path unchanged."""
+        intent = Intent(
+            user_request_summary="Defrost the windows",
+            required_but_missing_tools=["set_window_defrost"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        self.assertIsNone(
+            StateMachine()._relational_request_clarification(self._ctx(intent))
+        )
+
+    def test_relational_verb_without_object_overlap_stays_refusal_null_fp(self):
+        """Relational verb but nothing in the catalog can touch the object →
+        the request is genuinely impossible, keep the refusal."""
+        intent = Intent(
+            user_request_summary="Sync the seat massage",
+            required_but_missing_tools=["sync_seat_massage"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        self.assertIsNone(
+            StateMachine()._relational_request_clarification(self._ctx(intent))
+        )
+
+    def test_object_overlap_only_via_getter_stays_refusal_null_fp(self):
+        """Only get_vehicle_window_positions shares the object token — reading
+        is not adjusting, so the state is not reachable → refusal."""
+        getter_only = [t for t in WINDOW_TOOLS
+                       if t["function"]["name"] == "get_vehicle_window_positions"]
+        intent = Intent(
+            user_request_summary="Sync the rear window positions",
+            required_but_missing_tools=["sync_window_positions"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        self.assertIsNone(
+            StateMachine()._relational_request_clarification(
+                self._ctx(intent, tools=getter_only))
+        )
+
+    def test_no_unknown_tools_returns_none(self):
+        intent = Intent(
+            user_request_summary="Open the window",
+            required_tools=["open_close_window"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        self.assertIsNone(
+            StateMachine()._relational_request_clarification(self._ctx(intent))
+        )
+
+    def test_mixed_unknowns_one_standard_verb_stays_refusal_null_fp(self):
+        """EVERY unknown must be relational — one standard-verb hallucination
+        alongside keeps the refusal."""
+        intent = Intent(
+            user_request_summary="Sync and defrost the windows",
+            required_but_missing_tools=["sync_window_positions", "set_window_defrost"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        self.assertIsNone(
+            StateMachine()._relational_request_clarification(self._ctx(intent))
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

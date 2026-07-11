@@ -2474,3 +2474,44 @@ subset True. Erwarteter Flip: dis_22 0/3 → 3/3 (deterministischer Pfad).
 **Regressionsrisiko:** minimal — Rule feuert nur bei set_window_defrost(FRONT/ALL, on)
 UND Richtung ohne WINDSHIELD; alle bekannten GT-Tasks mit hartem WINDSHIELD sind
 direkte User-Wünsche ohne Defrost-Trigger.
+
+## Phase J2 — dis_28/dis_16 Value-Flow-Kette: Slot-Normalisierung, relative_steps, relationale Rückfrage
+
+**Datum:** 2026-07-11  **Stufe:** 6 (Disambiguation) + INTAKE + CAPABILITY  **Bezug:** Auftrag J (Dis-Durchbruch)
+
+**Systemisches Muster (Antwort auf "wo bricht die Kette?"):** Nicht die Kaskade selbst
+versagt, sondern das SCHLÜSSELFORMAT davor: INTAKE flaggt Slots unter natürlichsprachigen
+Namen (`fan_speed_level`), die Regel-Tabellen und der Injektions-Guard matchen aber exakt
+auf Schema-Namen (`level`). Lookup UND Injektion laufen ins Leere → identische Rückfrage
+in Schleife bis STOP (dis_28 T1). Zweiter Bruch: "by two levels" wurde als fester
+step=1 aufgelöst → falscher Zwischenzustand (dis_28 T2). Dritter Bruch: halluziniertes
+relationales Tool (`sync_window_positions`, dis_16) → Capability-Refusal statt gezielter
+Rückfrage, obwohl der Zielzustand mit Einzel-Settern erreichbar wäre.
+
+**Fixes (alle Lesson-1a-konform — LLM liefert nur Kandidaten, Code entscheidet):**
+
+- **A1 Slot-Normalisierung** (`disambiguation.py`): `_normalize_slot_argument` mappt
+  geflaggte Slot-Namen deterministisch auf Schema-Parameter — exakter Match →
+  case-insensitiver Unikat-Match → Token-Subset/Substring-Unikat-Match; nicht eindeutig
+  → None (Null-FP: `set_two_zones` mit zone_front/zone_rear + Flag "zone" injiziert nichts).
+- **A2 relative_steps** (`prompts/intake.py` + `disambiguation.py`): ValueAmbiguity-Feld
+  `relative_steps: Optional[int]` — NUR explizit genannte Schrittzahlen ("by two levels"→2),
+  nie erfunden; `_apply_relative` nutzt magnitude=steps (Bool/≤0 → Fallback rule.step=1),
+  Schema-Bounds-Clamping unverändert.
+- **B relationale Rückfrage** (`state_machine.py`, OI-022): unbekannte Tools, die ALLE mit
+  relationalem Verb beginnen (sync/match/align/mirror/copy/…) UND deren Objekt-Token ein
+  Nicht-Getter-Katalog-Tool teilt → eine gezielte Rückfrage ("which ones … to what value")
+  statt Refusal. Halluzinations-sicher: entfernte ECHTE Tools behalten Standard-Verben
+  (set_/open_/get_) → Gate feuert nicht, Refusal-Pfad unverändert.
+
+**Fake-Tests:** 12 neu — 6 in test_glassbox_disambiguation.py (Normalisierung+Injektion,
+Non-Unique-Null-FP, RelativeValueFlowTest: steps=2 ab current=0 → level=2, Default-Step,
+Max-Clamping, Bool-Steps-Null-FP), 6 in test_glassbox_state_machine.py
+(RelationalRequestClarificationTest inkl. Standard-Verb-, Getter-only-, No-Overlap- und
+Mixed-Null-FPs). Suite: 267 passed, nur die 2 vorbestehenden OI-010-Fails.
+
+**Erwartete Flips:** dis_28 1/3 → 3/3 (deterministischer Pfad nach Normalisierung),
+dis_16 0/3 → Rückfrage-Pfad erreichbar (Flip abhängig von User-Sim-Antwort, konservativ
+1-2/3). Regressionsrisiko: klein — Normalisierung greift nur bei sonst verlorenen Slots,
+relative_steps nur bei explizit genannter Zahl, relationales Gate nur bei relationalem
+Verb + Objekt-Überlappung.

@@ -680,18 +680,46 @@ instabil. Kein deterministisches Gate möglich ohne State-Machine-Umbau. Akzepti
 
 ---
 
-## OI-021 — Relative-Value-Disambiguation (dis_16, dis_22: 0/3)
-**Entdeckt:** 2026-07-11 (Auftrag H, Verifikationslauf)  **Stufe:** 6  **Priorität:** niedrig
+## OI-021 — Relative-Value-Disambiguation (ursprünglich dis_16/dis_22 zugeschrieben) ✅ BEHOBEN (J1/J2)
+**Entdeckt:** 2026-07-11 (Auftrag H)  **Korrigiert + behoben:** 2026-07-11 (Auftrag J)  **Stufe:** 6
 
-dis_16 und dis_22 beinhalten Anfragen wie „increase fan speed by one level" — ein relativer
-Wert, kein absoluter. Der Agent fragt wiederholt nach dem exakten Wert für `speed_level`,
-die User-Sim kann keinen absoluten Wert nennen → Sackgassen-Loop bis max_steps.
+**Korrektur der Zuordnung (Trace-Tiefenanalyse Auftrag J):** Die ursprüngliche Beschreibung
+war falsch gelabelt.
+- **dis_22** war KEIN Relative-Value-Problem, sondern AUT-POL:010-Semantik: Companion
+  injizierte hart `WINDSHIELD` statt Merge (`FEET → WINDSHIELD_FEET`). Behoben in J1
+  (offline verifiziert, Commit 687bef5).
+- **dis_16** war ebenfalls kein Relative-Value-Problem: INTAKE halluziniert
+  `sync_window_positions`, kein Fuzzy-Match → Capability-Refusal statt Rückfrage.
+  Das frühere „GT = honest inability"-Label war falsch — der „I'm sorry…"-Text stammte
+  vom AGENTEN, GT setzt beide Fondfenster per `open_close_window` auf 25 %. → OI-022.
+- Das ECHTE Relative-Value-Problem liegt in **dis_28** („by two levels"): INTAKE flaggt
+  den Slot als `fan_speed_level` statt Schema-Name `level` → Regel-Lookup + Injektion
+  scheitern, identische Rückfrage in Schleife (T1); Magnitude wurde als fester step=1
+  aufgelöst (T2).
 
-Fix 2 (spezifische Slot-Frage mit Enum-Values) greift hier NICHT, weil kein Enum-Eintrag
-den relativen Ansatz „eins höher" abdeckt. Fix 3 (Konversations-Zeithorizont) hilft nicht,
-weil der User den Wert auch in früheren Turns nie explizit nennt.
+**Fix (J2, deterministisch):** `_normalize_slot_argument` (exakt → case-insensitiv →
+Token-Subset-Unikat, sonst None) + `relative_steps`-Extraktion (nur explizit genannte
+Zahlen) mit magnitude-Anwendung inkl. Bounds-Clamping. 10 Fake-Tests inkl. Null-FPs.
 
-**Potentieller Fix:** Die `_RELATIVE_VALUE_RULES` aus OI-018 könnten erweitert werden, um
-relative Änderungen generisch zu erkennen (INTAKE müsste `relative_change` zuverlässig
-flaggen). Aufwand: mittel, Regressionsrisiko mittel (INTAKE-Stochastik). Impact: +0-2 Tasks.
-**Empfehlung:** akzeptieren bis 19. Juli — Ertrag zu gering für das Risiko.
+## OI-022 — Relationale Compound-Requests liefen in den Refusal-Pfad (dis_16) ✅ BEHOBEN (J2)
+**Entdeckt:** 2026-07-11 (Auftrag J)  **Stufe:** CAPABILITY_CHECK
+
+„Sync the rear windows" → INTAKE erfindet `sync_window_positions`; das Tool existiert
+nicht, Fuzzy-Gate matcht nichts → ehrlicher Refusal. Der Zielzustand ist aber mit
+Einzel-Settern erreichbar — GT stellt eine Rückfrage bzw. setzt beide Fenster einzeln.
+
+**Fix:** Deterministisches Gate `_relational_request_clarification`: feuert NUR wenn
+(a) ALLE unbekannten Tool-Namen mit relationalem Verb beginnen (sync/match/align/…)
+und (b) ein Nicht-Getter-Katalog-Tool ein Objekt-Token teilt → eine gezielte Rückfrage
+statt Refusal. Halluzinations-sicher: entfernte echte Tools behalten Standard-Verben
+(set_/open_/…) → Refusal-Pfad unverändert (6 Fake-Tests inkl. 4 Null-FPs).
+
+## OI-023 — Offene Beobachtungen aus Auftrag J (nicht behoben, niedrige Priorität)
+**Entdeckt:** 2026-07-11 (Auftrag J)  **Priorität:** niedrig
+
+- **Duplikat-Batches:** dis_28 T2 zeigte 16× identisches `set_fan_speed` in einem Batch.
+  Für den Evaluator harmlos (Hashes pro Turn, idempotenter Wert), aber Token-Verschwendung
+  und Symptom fehlender Batch-Deduplizierung im Planner.
+- **Loop-Breaker fehlt:** Stellt der Agent zweimal in Folge die IDENTISCHE Rückfrage,
+  sollte deterministisch eskaliert werden (Umformulierung oder Default) statt bis STOP
+  zu loopen. Nach der J2-Normalisierung seltener, aber strukturell weiter möglich.
