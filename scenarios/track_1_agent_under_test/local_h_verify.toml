@@ -1,0 +1,32 @@
+# Auftrag H — Verifikationslauf (7 Fixes).
+# 18 Tasks × 3 Trials = 54 Runs, geschätzt $8-11.
+#
+# Dis-Targets:  dis_16, dis_20, dis_22, dis_28, dis_32, dis_34, dis_36
+# Dis-Regression: dis_0, dis_18, dis_24
+# Hall-Targets: hall_10, hall_28, hall_32
+# Hall-Regression: hall_16
+# Base-Targets: base_10, base_30, base_32
+# Base-Regression: base_28
+#
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/h_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_h_verify.toml \
+#      > _local/runs/h_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_10", "base_28", "base_30", "base_32"]
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_16", "disambiguation_18", "disambiguation_20", "disambiguation_22", "disambiguation_24", "disambiguation_28", "disambiguation_32", "disambiguation_34", "disambiguation_36"]
+tasks_hallucination_task_id_filter = ["hallucination_10", "hallucination_16", "hallucination_28", "hallucination_32"]
+seed = 10
+max_steps = 50
