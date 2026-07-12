@@ -1,0 +1,26 @@
+# Auftrag J — Mini-Verifikation J4 (Companion-Rewrite bei Planner-Preemption).
+# 1 Task × 3 Trials = 3 Runs, geschätzt ~$0.50.
+#
+# Target: dis_22 — erwartet 0/3 → 3/3 (Merge WINDSHIELD_FEET, offline verifiziert in J1;
+# Regression durch Null-FP-Tests + J3-Ergebnis dis_6/base_8 abgedeckt).
+#
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/j4_mini_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_j4_mini.toml \
+#      > _local/runs/j4_mini.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_disambiguation_task_id_filter = ["disambiguation_22"]
+seed = 10
+max_steps = 50

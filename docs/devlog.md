@@ -2574,3 +2574,15 @@ WINDSHIELD" IM SELBEN Batch wie Defrost würde gemerged — im Benchmark nicht b
 
 **Erwarteter Flip:** dis_22 0/3 → 3/3 (Trajektorie ansonsten GT-identisch, offline
 verifiziert in J1).
+
+## Phase J5 — Mini-Verifikation J4 (Hypothese, VOR dem Lauf committet)
+
+**Datum:** 2026-07-12  **Config:** `local_j4_mini.toml`, dis_22 × 3 Trials, seed 10.
+Freigabe erteilt (Schätzung ~$0.50).
+
+**Hypothese:** dis_22 0/3 → 3/3. Der J4-Rewrite-Pass schreibt den planner-gelieferten
+`set_fan_airflow_direction(WINDSHIELD)`-Call bei beobachtetem FEET auf WINDSHIELD_FEET
+um; die restliche Trajektorie war in J3 bereits GT-identisch (offline verifiziert J1).
+Erwartetes Log-Signal: Note „rewrote planner-supplied companion" ≥1× pro Trial.
+Regression: durch 3 Null-FP-Tests + J3-Ergebnis (dis_6/base_8 3/3) abgedeckt, kein
+separates Regressionsset.
