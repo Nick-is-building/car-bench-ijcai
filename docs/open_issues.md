@@ -732,3 +732,9 @@ statt Refusal. Halluzinations-sicher: entfernte echte Tools behalten Standard-Ve
 - **Loop-Breaker fehlt:** Stellt der Agent zweimal in Folge die IDENTISCHE Rückfrage,
   sollte deterministisch eskaliert werden (Umformulierung oder Default) statt bis STOP
   zu loopen. Nach der J2-Normalisierung seltener, aber strukturell weiter möglich.
+- **`defrost_window`-Rückfrage stochastisch (dis_22 Trial 0, J6-Lauf 20260712-003755):**
+  Bei User-Text „turn on the defrost" (kein Fenster spezifiziert) rät der Planner
+  in ~1/3 Trials `defrost_window="ALL"` statt nachzufragen; GT ist FRONT. INTAKE
+  markiert den Slot dort nicht als `value_ambiguity`. Fix möglich durch harte
+  Kaskaden-Regel oder Prompt-Schärfung, aber Regressionsrisiko in stabilem Split.
+  Empfehlung: für 19. Juli akzeptieren (dis_22 stabilisiert bei 2/3).

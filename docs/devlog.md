@@ -2615,3 +2615,29 @@ Suite 275 passed (nur OI-010).
 
 **Erwarteter Flip:** dis_22 2/3 → 3/3 (Trial-0-Pfad: Airflow-Call wandert in den
 Defrost-Batch, Merge greift).
+
+## Phase J6 — Ergebnis Mini-Lauf (20260712-003755): dis_22 2/3, aber Fail-Modus verschoben
+
+**Rohdaten:** `docs/experiments/2026-07-12-j6-mini.json`
+
+**Positives Signal:** Der WINDSHIELD_FEET-Merge greift in ALLEN drei Trials
+(auch Trial 0!). Der ursprüngliche Trial-0-Pfad (naives WINDSHIELD vor pending Trigger)
+ist deterministisch geschlossen.
+
+**Neuer Trial-0-Fail (unabhängig von J1-J6):** User-Sim sagt „turn on the defrost"
+(ohne FRONT/REAR/ALL); der Planner rät `defrost_window="ALL"` statt GT-`FRONT`.
+Trials 1+2 zeigen: wenn der Agent nachfragt, antwortet die Sim „FRONT". Reine
+LLM-Planner-Stochastik beim `defrost_window`-Slot — dieselbe Klasse wie dis_28/OI-018
+(Value-Disambiguation für einen Enum-Slot), aber hier hat INTAKE den Slot gar nicht
+als `value_ambiguity` markiert.
+
+**Entscheidung:** dis_22 auf 2/3 akzeptieren. Ein weiterer Fix („defrost_window
+deterministisch als value_ambiguity behandeln, wenn User nur ‚the defrost' sagt")
+bräuchte Prompt-Schärfung oder eine harte Kaskaden-Regel und würde Regressionsrisiko
+in einem stabilen Split einbringen. Kosten-Nutzen: dis_22 0/3 → 2/3 ist bereits ein
+klarer Fortschritt, der Restfall ist stochastisch und nicht dieselbe systemische
+Kette wie J1/J4/J6.
+
+**Dis-Split-Bilanz nach Auftrag J:** neu solid 3/3 → dis_16, dis_18, dis_24, dis_28;
+stabil 3/3 → dis_0/2/4/6/10/14/20/30/32/36; teilstabil → dis_22 (2/3), dis_12/34 (2/3);
+offen 0/3 → dis_8 (akzeptiert), dis_26, dis_38.
