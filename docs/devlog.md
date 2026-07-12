@@ -2586,3 +2586,32 @@ um; die restliche Trajektorie war in J3 bereits GT-identisch (offline verifizier
 Erwartetes Log-Signal: Note „rewrote planner-supplied companion" ≥1× pro Trial.
 Regression: durch 3 Null-FP-Tests + J3-Ergebnis (dis_6/base_8 3/3) abgedeckt, kein
 separates Regressionsset.
+
+## Phase J5 — Ergebnis Mini-Lauf (20260712-002416): dis_22 0/3 → 2/3
+
+**Trials 1+2:** reward 1.0 — J4-Rewrite greift, `set_fan_airflow_direction(WINDSHIELD_FEET)`
+im Trigger-Batch. **Trial 0:** reward 0. Ablauf: User-Sim startet vage → Fenster-Rückfrage;
+danach plant der Planner AC+Fan+`WINDSHIELD` in einem Batch OHNE `set_window_defrost`
+(das wartet noch auf die `defrost_window`-Klärung). Ohne Trigger im Batch evaluiert die
+Rule nicht → naives WINDSHIELD wird ausgeführt und kontaminiert den Zustand; als der
+Defrost später kommt, ist `needs()` False → Endzustand WINDSHIELD ≠ GT WINDSHIELD_FEET.
+Hinweis: die Rewrite-Note landet in `PreFlightResult.notes`, nicht im Agent-Log —
+Log-Signal-Zählung ist dafür ungeeignet.
+
+## Phase J6 — Premature-Companion-Defer (dis_22 Trial-0-Pfad)
+
+**Fix (`policies.py` + `state_machine.py`):** `_defer_premature_value_companions` —
+wertabhängige Companion-Calls (callable `companion_args`), deren Argumente exakt dem
+wertblinden Fallback entsprechen, werden DEFERRED, wenn der Trigger laut Turn-Intent
+(`required_tools`, via `pending_tools` an `pre_flight` durchgereicht) noch aussteht,
+aber nicht im Batch und nicht bereits in diesem Turn gelaufen ist. Sie laufen dann im
+selben Batch wie der Trigger, wo Rewrite/Injektion den Merge-Wert setzen. Statische
+Companions (fan=2, AC=on) sind reihenfolge-unabhängig und bleiben unangetastet.
+
+**Null-FP-Sicherheit:** dis_6/base_8 — `set_window_defrost` ist dort nie in
+`required_tools` → kein Defer (Test). Explizit abweichende Richtung ≠ Fallback → nie
+deferred (Test). Trigger im Batch → Rewrite statt Defer (Test). 4 neue Tests,
+Suite 275 passed (nur OI-010).
+
+**Erwarteter Flip:** dis_22 2/3 → 3/3 (Trial-0-Pfad: Airflow-Call wandert in den
+Defrost-Batch, Merge greift).

@@ -891,6 +891,7 @@ class _Env:
         self.index = index
         self.ledger = ledger
         self.result = result
+        self.pending_tools: set[str] = set()
         self.state = derive_known_state(ledger)
         self.task_ctx = parse_task_context(ledger)
         turn_calls = ledger.get_tool_calls_this_turn()
@@ -1028,7 +1029,34 @@ def _eval_prior_observation(rule: PriorObservationRule, env: _Env) -> None:
                   f"{rule.observe_tool} result required first")
 
 
+def _defer_premature_value_companions(rule: StateCompanionRule, env: _Env) -> None:
+    """A value-dependent companion (callable args, e.g. Airflow-Merge) is
+    order-sensitive: executed BEFORE its trigger, its naive fallback value
+    contaminates the state and the merge can never happen (dis_22 trial 0,
+    trigger held back by a clarification). If the trigger is pending per the
+    turn intent but absent from this batch, defer exactly those naive calls to
+    the batch that contains the trigger. Static companions (fan=2, AC=on) are
+    order-independent and stay untouched. Explicit user values differ from the
+    value-blind fallback and are never deferred."""
+    if rule.trigger_tool not in env.pending_tools:
+        return
+    if any(c.tool == rule.trigger_tool for c in env.result.kept):
+        return
+    if rule.trigger_tool in env.tools_called_this_turn:
+        return
+    for spec in rule.companions:
+        if not callable(spec.companion_args):
+            continue
+        naive_args = spec.companion_args(None)
+        for planned in list(env.result.kept):
+            if planned.tool == spec.companion_tool and planned.arguments == naive_args:
+                env.defer(planned, rule.policy_id,
+                          f"value-dependent companion must run together with "
+                          f"the pending trigger {rule.trigger_tool}")
+
+
 def _eval_state_companion(rule: StateCompanionRule, env: _Env) -> None:
+    _defer_premature_value_companions(rule, env)
     for call in _triggers(rule, env):
         if call not in env.result.kept:
             continue
@@ -1161,9 +1189,11 @@ class PolicyChecker:
     calls to a later plan round. Tool names appear only in the rule data.
     """
 
-    def pre_flight(self, calls: list, ledger: Ledger, index) -> PreFlightResult:
+    def pre_flight(self, calls: list, ledger: Ledger, index,
+                   pending_tools: frozenset[str] | set[str] = frozenset()) -> PreFlightResult:
         result = PreFlightResult(kept=list(calls))
         env = _Env(index, ledger, result)
+        env.pending_tools = set(pending_tools)
         for rule in RULES:
             _EVALUATORS[type(rule)](rule, env)
             if result.missing_capability:

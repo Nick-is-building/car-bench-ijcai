@@ -874,4 +874,9 @@ class StateMachine:
     def _policy_pre_flight(self, ctx: TurnContext, calls: list[PlannedCall], matcher):
         from .policies import PolicyChecker
 
-        return PolicyChecker().pre_flight(calls, ctx.ledger, matcher.index)
+        pending = {
+            t for t in (ctx.intent or {}).get("required_tools", [])
+            if matcher.index.has_tool(t)
+        }
+        return PolicyChecker().pre_flight(calls, ctx.ledger, matcher.index,
+                                          pending_tools=pending)

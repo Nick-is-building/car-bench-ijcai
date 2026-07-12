@@ -91,8 +91,9 @@ def call(tool: str, args: dict, cid: str = "p0") -> PlannedCall:
     return PlannedCall(tool=tool, arguments=args, call_id=cid)
 
 
-def pre_flight(calls, ledger, index=INDEX):
-    return PolicyChecker().pre_flight(calls, ledger, index)
+def pre_flight(calls, ledger, index=INDEX, pending_tools=frozenset()):
+    return PolicyChecker().pre_flight(calls, ledger, index,
+                                      pending_tools=pending_tools)
 
 
 def policy_ids(violations) -> list[str]:
@@ -457,6 +458,72 @@ class StateCompanionTest(unittest.TestCase):
         self.assertEqual(airflow.arguments, {"direction": "WINDSHIELD"})
         self.assertEqual(pf.injected, [])
         self.assertEqual(pf.kept, [airflow])
+
+    # --- Premature-Companion-Defer: naive Companion ohne Trigger im Batch ---
+
+    def _premature_batch(self, ledger=None):
+        if ledger is None:
+            ledger = make_ledger()
+            observe(ledger, "get_climate_settings",
+                    {"fan_speed": 0, "fan_airflow_direction": "FEET",
+                     "air_conditioning": False})
+            observe(ledger, "get_vehicle_window_positions",
+                    {"window_driver_position": 0, "window_passenger_position": 0,
+                     "window_driver_rear_position": 0,
+                     "window_passenger_rear_position": 0})
+        fan = call("set_fan_speed", {"level": 2}, "p0")
+        ac = call("set_air_conditioning", {"on": True}, "p1")
+        airflow = call("set_fan_airflow_direction",
+                       {"direction": "WINDSHIELD"}, "p2")
+        return ledger, fan, ac, airflow
+
+    def test_premature_naive_companion_deferred_when_trigger_pending(self):
+        """dis_22 trial 0: planner runs the companions in a batch WITHOUT the
+        defrost (held back by clarification) → the naive WINDSHIELD call is
+        deferred to the trigger batch; static companions run untouched."""
+        ledger, fan, ac, airflow = self._premature_batch()
+        pf = pre_flight([fan, ac, airflow], ledger,
+                        pending_tools={"set_window_defrost"})
+        self.assertIn(airflow, pf.deferred)
+        self.assertIn(fan, pf.kept)
+        self.assertIn(ac, pf.kept)
+
+    def test_premature_defer_skipped_without_pending_trigger_null_fp(self):
+        """dis_6/base_8: user explicitly wants WINDSHIELD, no defrost pending
+        → nothing is deferred."""
+        ledger, fan, ac, airflow = self._premature_batch()
+        pf = pre_flight([fan, ac, airflow], ledger, pending_tools=set())
+        self.assertEqual(pf.deferred, [])
+        self.assertIn(airflow, pf.kept)
+
+    def test_premature_defer_skipped_for_explicit_direction_null_fp(self):
+        """An argument differing from the value-blind fallback is a deliberate
+        user value and is never deferred, even with the trigger pending."""
+        ledger = make_ledger()
+        observe(ledger, "get_climate_settings",
+                {"fan_speed": 0, "fan_airflow_direction": "HEAD",
+                 "air_conditioning": False})
+        airflow = call("set_fan_airflow_direction", {"direction": "FEET"})
+        pf = pre_flight([airflow], ledger,
+                        pending_tools={"set_window_defrost"})
+        self.assertEqual(pf.deferred, [])
+        self.assertIn(airflow, pf.kept)
+
+    def test_no_defer_when_trigger_in_same_batch(self):
+        """Trigger present → rewrite path handles the naive value instead of
+        deferring it."""
+        ledger = make_ledger()
+        observe(ledger, "get_climate_settings",
+                {"fan_speed": 2, "fan_airflow_direction": "FEET",
+                 "air_conditioning": True})
+        defrost = call("set_window_defrost",
+                       {"defrost_window": "FRONT", "on": True}, "p0")
+        airflow = call("set_fan_airflow_direction",
+                       {"direction": "WINDSHIELD"}, "p1")
+        pf = pre_flight([defrost, airflow], ledger,
+                        pending_tools={"set_window_defrost"})
+        self.assertEqual(pf.deferred, [])
+        self.assertEqual(airflow.arguments, {"direction": "WINDSHIELD_FEET"})
 
 
 # ---------------------------------------------------------------------------
