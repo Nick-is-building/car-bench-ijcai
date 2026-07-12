@@ -171,6 +171,50 @@ class C5SanitizeNullFpTest(unittest.TestCase):
         self.assertIn("I don't have confirmed information", out)
         self.assertNotIn("99 minutes", out)
 
+    # --- dis_38 3rd-layer fix: policy_notes-Werte gelten auch für C5-sanitize ---
+
+    _ZONE_NOTE = (
+        "LLM-POL:012: setting the driver zone to 24°C creates a 7.0°C difference "
+        "to the passenger zone (17°C). You MUST inform the user about this "
+        "temperature difference."
+    )
+
+    def _run_sanitize_with_notes(self, draft_text, ledger, extracted_claims, notes):
+        resp = ClaimExtractionResponse(claims=extracted_claims)
+        with patch(
+            "track_1_agent_under_test.glassbox.llm.call_structured",
+            return_value=resp,
+        ):
+            return FabricationGuard().sanitize(draft_text, ledger, model="fake",
+                                               policy_notes=notes)
+
+    def test_derived_value_backed_by_policy_note_passes(self):
+        """Zonentemp-Diff 7°C ist abgeleitet, aber der policy_note liefert sie."""
+        led = _ledger_with_tool_result(
+            {"climate_temperature_driver": 26, "climate_temperature_passenger": 17})
+        draft = "Done. This creates a 7 degree difference to the passenger zone."
+        out = self._run_sanitize_with_notes(
+            draft, led,
+            [FactualClaim(value="7 degree difference",
+                          sentence="This creates a 7 degree difference to the passenger zone.")],
+            [self._ZONE_NOTE],
+        )
+        self.assertIn("7 degree difference", out)
+        self.assertNotIn("I don't have confirmed information", out)
+
+    def test_fabricated_value_with_unrelated_policy_note_still_replaced_null_fp(self):
+        """policy_note über Zonen deckt KEINE ETA-Fabrikation (Null-FP)."""
+        led = _ledger_with_tool_result({"eta_minutes": 42})
+        draft = "You'll arrive in 99 minutes."
+        out = self._run_sanitize_with_notes(
+            draft, led,
+            [FactualClaim(value="99 minutes",
+                          sentence="You'll arrive in 99 minutes.")],
+            [self._ZONE_NOTE],
+        )
+        self.assertIn("I don't have confirmed information", out)
+        self.assertNotIn("99 minutes", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -491,13 +491,24 @@ class FabricationGuard:
 
     # --- C5: draft sanitization ---
 
-    def sanitize(self, draft: str, ledger: Ledger, model: str | None = None) -> str:
+    def sanitize(self, draft: str, ledger: Ledger, model: str | None = None,
+                 policy_notes: list[str] | tuple[str, ...] = ()) -> str:
         """
         C5: remove or replace unsupported factual claims in draft.
         Mandatory route-choice mention added if missing (OI-012 partial).
         LLM extracts candidates; code decides via Ledger-corpus check (Lesson 1a).
+
+        Values and quotes from `policy_notes` count as supported: deterministic
+        PolicyChecker notes (e.g. LLM-POL:012 zone-temperature difference) are
+        derived from ledger state — the LLM is required to surface them, so
+        this sanitize step must not kill the very obligation the policy asks
+        it to communicate (dis_38 root cause 3rd layer). Only this sanitize
+        step uses the extended corpus; pre-execute argument checks upstream
+        keep the ledger-only corpus.
         """
         corpus = _ledger_text_corpus(ledger)
+        if policy_notes:
+            corpus = corpus + " " + " ".join(policy_notes)
 
         system = (
             "You are a claim extractor for an in-car voice assistant. "

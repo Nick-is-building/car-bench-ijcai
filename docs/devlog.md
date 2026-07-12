@@ -2775,3 +2775,34 @@ Freigabe ausstehend. Schätzung: ~$1.
 **Hypothesen:**
 - dis_38: 0/3 → 2-3/3 (Auditor-Fixes 1a+1b, LLM-Stochastik bei Note-Formulierung)
 - base_2: 1/3 → 3/3 (Confirmation-Template rendert action explizit)
+
+## Phase K7 — Ergebnis Mini-Verify: base_2 3/3 ✅, dis_38 0/3 (dritte Auditor-Ebene entdeckt)
+
+**Lauf 20260712-203838:**
+- base_2 1/3 → **3/3** ✅ — Fix 2 (action-Argument im Confirmation-Template) wirkt.
+- dis_38 weiter 0/3 ❌ — Response wieder mit „I'm sorry, I don't have confirmed
+  information about that." abgeschnitten.
+
+**Root Cause dritte Ebene:** Der eigentliche Killer ist NICHT der Auditor, sondern
+`FabricationGuard.C5.sanitize` (guard.py:546). Meine K2/K4-Fixes am Auditor waren
+korrekt, aber der C5-sanitize-Guard läuft NACH dem Auditor mit `_ledger_text_corpus`
+OHNE policy_notes und macht seinen eigenen Claim-Extract-und-Ersetz-Durchlauf.
+Log-Signal: `FabricationGuard.C5: unsupported claim replaced` mit `claim_value:
+"7 degree difference"`.
+
+## Phase K8 — Fix 1c: FabricationGuard.C5 akzeptiert policy_notes
+
+**Fix (`guard.py`):** `sanitize(..., policy_notes=())` erweitert Corpus analog zum
+Auditor. Werte in deterministisch generierten policy_notes gelten damit als supported.
+`state_machine._verify_and_respond` reicht `ctx.policy_notes` durch.
+
+**Sicherheit:** Der PRE-EXECUTE FabricationGuard (`check_tool_arguments`) bleibt
+unangetastet — er prüft weiterhin gegen den reinen Ledger-Corpus, um erfundene
+Argumente nicht durch policy_note-Text durchzulassen. Nur der POST-Draft-Pfad
+(sanitize) profitiert von der Erweiterung.
+
+**Fake-Tests:** 2 neue in test_glassbox_oi015.py — (a) 7°C-Diff wird durch Note
+gedeckt (Treffer), (b) Zone-Note deckt keine ETA-Fabrikation (Null-FP).
+Suite: 283 passed (nur OI-010).
+
+**Erwarteter Impact:** dis_38 0/3 → 2-3/3 (LLM-Stochastik bei Note-Formulierung).

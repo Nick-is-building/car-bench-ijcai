@@ -678,7 +678,8 @@ class StateMachine:
         ))
 
         fg = FabricationGuard()
-        safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model)
+        safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model,
+                           policy_notes=ctx.policy_notes)
         ctx.layer_decisions.append(GuardResult(
             verdict="BLOCK" if safe != audit.safe_text else "PASS",
             layer="FabricationGuard.C5",
