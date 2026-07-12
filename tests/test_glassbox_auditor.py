@@ -112,6 +112,64 @@ class AuditorPreResponseTest(unittest.TestCase):
         self.assertIn(_HONEST_ADMISSION, res.safe_text)
         self.assertEqual(len(res.issues), 1)
 
+    # --- OI-008 / dis_38: values from policy_notes count as supported ---
+
+    _ZONE_NOTE = (
+        "LLM-POL:012: setting the driver zone to 24°C creates a 7.0°C difference "
+        "to the passenger zone (17°C). You MUST inform the user about this "
+        "temperature difference."
+    )
+
+    def test_value_backed_by_policy_note_passes(self):
+        """Zone-temp obligation: the 7°C diff is derived, not present in tool
+        results, but the deterministic policy_note supplies it."""
+        led = _ledger_with_tool_result({"climate_temperature_driver": 26,
+                                        "climate_temperature_passenger": 17})
+        draft = Draft(
+            claims=[ClaimCheck(
+                value="7°C",
+                sentence="Note: this creates a 7°C difference to the passenger zone.",
+                source="7.0°C difference",
+            )],
+            response="Done. Note: this creates a 7°C difference to the passenger zone.",
+        )
+        res = Auditor().pre_response_check(draft, led, policy_notes=[self._ZONE_NOTE])
+        self.assertTrue(res.passed)
+        self.assertEqual(res.issues, [])
+        self.assertIn("7°C difference", res.safe_text)
+
+    def test_value_without_policy_note_still_replaced_null_fp(self):
+        """Without the note the 7°C claim has no ledger backing → replaced."""
+        led = _ledger_with_tool_result({"climate_temperature_driver": 26,
+                                        "climate_temperature_passenger": 17})
+        draft = Draft(
+            claims=[ClaimCheck(
+                value="7°C",
+                sentence="Note: this creates a 7°C difference.",
+                source="",
+            )],
+            response="Done. Note: this creates a 7°C difference.",
+        )
+        res = Auditor().pre_response_check(draft, led)
+        self.assertFalse(res.passed)
+        self.assertIn(_HONEST_ADMISSION, res.safe_text)
+
+    def test_fabricated_value_with_unrelated_policy_note_still_replaced_null_fp(self):
+        """A policy_note about zones does NOT rescue an ETA fabrication."""
+        led = _ledger_with_tool_result({"climate_temperature_driver": 26,
+                                        "climate_temperature_passenger": 17})
+        draft = Draft(
+            claims=[ClaimCheck(
+                value="42 minutes",
+                sentence="ETA is 42 minutes.",
+                source="",
+            )],
+            response="ETA is 42 minutes.",
+        )
+        res = Auditor().pre_response_check(draft, led, policy_notes=[self._ZONE_NOTE])
+        self.assertFalse(res.passed)
+        self.assertIn(_HONEST_ADMISSION, res.safe_text)
+
 
 if __name__ == "__main__":
     unittest.main()

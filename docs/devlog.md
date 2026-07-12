@@ -2667,3 +2667,39 @@ möglich und wird VOR den K-Fixes gegated.
 1. Fix 1: dis_26 + dis_38 (OI-008 Zonentemp + strukturell)
 2. Fix 2: hall_0 (OI-014 FabricationGuard-Subtypen)
 3. Fix 3: OI-009 (AUT-POL:016 Routenstart Guard)
+
+## Phase K2 — Fix 1: OI-008 Auditor akzeptiert Werte aus policy_notes (dis_38)
+
+**Datum:** 2026-07-12  **Stufe:** 7 (Auditor)  **Bezug:** K1-Fail dis_38 (0/3)
+
+**Root Cause (K1-Trace dis_38 T0):** Die LLM-POL:012-ObligationNoteRule wird korrekt
+gefeuert und die Note „setting the driver zone to 24°C creates a 7.0°C difference to
+the passenger zone (17°C). You MUST inform the user…" landet in `ctx.policy_notes`.
+Der Draft-LLM formuliert den 7°C-Satz. Aber der Auditor sucht den Wert `7` in
+`_ledger_text_corpus`, das NUR user/system/tool_result-Einträge enthält — die 7 ist
+eine ABGELEITETE Größe aus 24 − 17 und steht nirgendwo im Ledger direkt. Konsequenz:
+`unsupported claim` → Satz wird durch _HONEST_ADMISSION ersetzt („I'm sorry, I don't
+have confirmed information about that."). Genau der Text im K1-Response von dis_38 T0.
+
+**Fix:** `Auditor.pre_response_check(draft, ledger, policy_notes=())` nimmt zusätzlich
+die Policy-Notes des Turns entgegen und erweitert den Corpus um deren Text. Werte und
+Source-Quotes aus deterministisch generierten Policy-Notes gelten damit als supported.
+`state_machine._verify_and_respond` reicht `ctx.policy_notes` durch.
+
+**Wichtig — der pre-execute FabricationGuard bleibt unangetastet:** Nur der Auditor
+(POST-Draft, Stufe 7) sieht den erweiterten Corpus. Der PRE-EXECUTE FabricationGuard
+(Stufe 5) prüft weiterhin gegen den reinen Ledger-Corpus, damit erfundene Argumente
+nicht durch policy_note-Text durchgewinkt werden können.
+
+**Fake-Tests:** 3 neue in test_glassbox_auditor.py — (a) 7°C-Claim wird durch
+policy_note gedeckt (Treffer), (b) ohne policy_note bleibt Verhalten unverändert
+(Null-FP), (c) policy_note über Zonen deckt KEINE ETA-Fabrikation (Null-FP).
+Suite: 278 passed (nur die 2 vorbestehenden OI-010).
+
+**Erwarteter Impact:** dis_38 0/3 → 3/3 falls Sonnet die Note konsistent in den
+Response schreibt (Prompt schreibt „You MUST inform"). Bei LLM-Stochastik ggf. 2/3.
+
+## Phase K3 — Mini-Verifikation Fix 1 (Hypothese)
+
+**Config:** `local_k2_mini.toml`, dis_38 × 3 Trials, seed 10. Freigabe ausstehend.
+Schätzung: ~$0.50. Erwartung: 0/3 → 2-3/3.

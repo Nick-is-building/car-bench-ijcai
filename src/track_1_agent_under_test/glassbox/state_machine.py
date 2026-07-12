@@ -669,7 +669,8 @@ class StateMachine:
 
         # Stufe 7: deterministic self-check of the draft's declared claims
         # (no LLM call of its own — parses the forced self-check in `draft.claims`).
-        audit = Auditor().pre_response_check(draft, ctx.ledger)
+        audit = Auditor().pre_response_check(draft, ctx.ledger,
+                                              policy_notes=ctx.policy_notes)
         ctx.layer_decisions.append(GuardResult(
             verdict="BLOCK" if not audit.passed else "PASS",
             layer="Auditor.pre_response",

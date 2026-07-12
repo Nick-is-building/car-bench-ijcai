@@ -41,15 +41,26 @@ class AuditResult:
 class Auditor:
     """Deterministic pre-response self-check (no LLM call of its own)."""
 
-    def pre_response_check(self, draft: "Draft", ledger: Ledger) -> AuditResult:  # type: ignore[name-defined]
+    def pre_response_check(self, draft: "Draft", ledger: Ledger,
+                           policy_notes: list[str] | tuple[str, ...] = ()) -> AuditResult:  # type: ignore[name-defined]
         """Verify each self-declared factual claim against the ledger.
 
         A numeric claim whose value has no ledger provenance (or whose declared
         source quote is not in the ledger) is unsupported → its sentence is
         replaced by an honest admission. String-only claims are left untouched
         (they may be valid paraphrases of tool results — Null-FP discipline).
+
+        Values and quotes from `policy_notes` count as supported: those notes
+        are emitted by the deterministic PolicyChecker (e.g. LLM-POL:012 zone
+        temperature difference) and derive from ledger state — the LLM is
+        REQUIRED to surface them. Without this, the Auditor kills the very
+        obligation the policy is asking it to communicate (dis_38 root cause).
+        Only the Auditor uses this extended corpus; the pre-execute
+        FabricationGuard keeps the ledger-only corpus to prevent fabrication.
         """
         corpus = _ledger_text_corpus(ledger)
+        if policy_notes:
+            corpus = corpus + " " + " ".join(policy_notes)
         safe = draft.response
         issues: list[str] = []
 
