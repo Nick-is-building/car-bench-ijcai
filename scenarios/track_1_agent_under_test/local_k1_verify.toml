@@ -1,0 +1,35 @@
+# Auftrag K1 — Zwischen-Verifikation nach Auftrag J.
+# 30 Tasks × 3 Trials = 90 Runs, geschätzt ~$12.
+#
+# Ziele:
+# - Vollständige Fail-Landkarte im Dis-Split nach J1-J6 (alle 20 Dis)
+# - Gezielte Regressions-Kontrolle Base (5): State-Companion + Silent-Refusal
+# - Gezielte Regressions-Kontrolle Hall (5): Refusal-Pfad + Fabrication
+#
+# Basiert die Priorisierung für die nächsten Fixes:
+#   Fix 1: dis_26 + dis_38 (OI-008 Zonentemp)
+#   Fix 2: hall_0 (OI-014 FabricationGuard-Subtypen)
+#   Fix 3: OI-009 (AUT-POL:016 Routenstart)
+#
+# Run: cd /home/Kathi/car-bench-ijcai && set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/k1_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_k1_verify.toml \
+#      > _local/runs/k1_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_2", "base_8", "base_10", "base_28", "base_30"]
+tasks_disambiguation_task_id_filter = ["disambiguation_0", "disambiguation_2", "disambiguation_4", "disambiguation_6", "disambiguation_8", "disambiguation_10", "disambiguation_12", "disambiguation_14", "disambiguation_16", "disambiguation_18", "disambiguation_20", "disambiguation_22", "disambiguation_24", "disambiguation_26", "disambiguation_28", "disambiguation_30", "disambiguation_32", "disambiguation_34", "disambiguation_36", "disambiguation_38"]
+tasks_hallucination_task_id_filter = ["hallucination_0", "hallucination_16", "hallucination_28", "hallucination_32", "hallucination_36"]
+seed = 10
+max_steps = 50

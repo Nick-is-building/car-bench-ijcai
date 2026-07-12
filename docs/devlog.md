@@ -2641,3 +2641,29 @@ Kette wie J1/J4/J6.
 **Dis-Split-Bilanz nach Auftrag J:** neu solid 3/3 → dis_16, dis_18, dis_24, dis_28;
 stabil 3/3 → dis_0/2/4/6/10/14/20/30/32/36; teilstabil → dis_22 (2/3), dis_12/34 (2/3);
 offen 0/3 → dis_8 (akzeptiert), dis_26, dis_38.
+
+## Phase K1 — Zwischen-Verifikation nach Auftrag J (Hypothese, VOR dem Lauf)
+
+**Datum:** 2026-07-12  **Config:** `local_k1_verify.toml`, 30 Tasks × 3 Trials = 90 Runs,
+seed 10. Freigabe erteilt (Schätzung ~$12).
+
+**Ziel:** Fail-Landkarte für Auftrag K (3 Fix-Bereiche). Konsolidierter Stand nach J1-J6
+auf allen 20 Dis-Tasks + gezielte Regressions-Kontrolle auf je 5 kritischen Base/Hall.
+
+**Hypothesen (nach Split):**
+
+- **Dis: 12-14/20 Pass^3 (.60-.70).** Neu solid: dis_16/18/22/24/28. Erwartet solid:
+  dis_0/2/4/6/10/14/20/30/32/36. dis_22 bei 2/3 (Slot-Stochastik, akzeptiert).
+  Offen 0/3: dis_8, dis_26, dis_38. Flaky 2/3: dis_12, dis_34.
+- **Base: 4-5/5 Pass^3.** J-Fixes lokal in policies.py (State-Companion), sollten
+  base_2/base_8/base_10/base_28/base_30 unberührt lassen.
+- **Hall: 3-4/5 Pass^3.** hall_0 (OI-014, 0/3 erwartet), hall_16/32/36 solide,
+  hall_28 stochastisch (1-2/3).
+
+**Abbruchkriterium:** Fällt ein bisher solider Task auf 0/3, gilt eine J-Regression als
+möglich und wird VOR den K-Fixes gegated.
+
+**Nächste Schritte nach K1-Auswertung:**
+1. Fix 1: dis_26 + dis_38 (OI-008 Zonentemp + strukturell)
+2. Fix 2: hall_0 (OI-014 FabricationGuard-Subtypen)
+3. Fix 3: OI-009 (AUT-POL:016 Routenstart Guard)
