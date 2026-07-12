@@ -1,0 +1,46 @@
+# Generalprobe Delta-Lauf: 69 nie getestete Tasks × 3 Trials = 207 Runs.
+# Ergänzt den E2-Lauf (20/Split) um die restlichen Train-Tasks.
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/generalprobe_delta_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_generalprobe_delta.toml \
+#      > _local/runs/generalprobe_delta.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+tasks_base_task_id_filter = [
+    "base_40", "base_42", "base_44", "base_46", "base_48",
+    "base_50", "base_52", "base_54", "base_56", "base_58",
+    "base_60", "base_62", "base_64", "base_66", "base_68",
+    "base_70", "base_72", "base_74", "base_76", "base_78",
+    "base_80", "base_82", "base_84", "base_86", "base_88",
+    "base_90", "base_92", "base_94", "base_96", "base_98"
+]
+
+tasks_hallucination_task_id_filter = [
+    "hallucination_40", "hallucination_42", "hallucination_44", "hallucination_46", "hallucination_48",
+    "hallucination_50", "hallucination_52", "hallucination_54", "hallucination_56", "hallucination_58",
+    "hallucination_60", "hallucination_62", "hallucination_64", "hallucination_66", "hallucination_68",
+    "hallucination_70", "hallucination_72", "hallucination_74", "hallucination_76", "hallucination_78",
+    "hallucination_80", "hallucination_82", "hallucination_84", "hallucination_86", "hallucination_88",
+    "hallucination_90", "hallucination_92", "hallucination_94"
+]
+
+tasks_disambiguation_task_id_filter = [
+    "disambiguation_40", "disambiguation_42", "disambiguation_44", "disambiguation_46", "disambiguation_48",
+    "disambiguation_50", "disambiguation_51", "disambiguation_52", "disambiguation_53", "disambiguation_54",
+    "disambiguation_55"
+]

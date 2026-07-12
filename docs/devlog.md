@@ -4,6 +4,39 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-12 — GENERALPROBE Phase 1: Delta-Lauf (69 neue Tasks × 3 Trials)
+
+**Ziel:** Alle Train-Tasks testen, die bisher nie gelaufen sind (base_40–98, hall_40–94,
+dis_40–55). Ergänzt den E2-Lauf (20/Split) + K-Verifizierungsläufe um den Rest des
+Train-Splits. Zusammen mit den bekannten Ergebnissen ergibt das die Generalprobe auf
+dem vollen Train-Split.
+
+**Konfiguration:** 69 Tasks × 3 Trials = 207 Runs. Agent claude-sonnet-4-6 (anthropic),
+Judge/User gemini-2.5-flash, seed 10, max_steps 50. Geschätzte Kosten: ~$27.
+
+**Hypothese (vor dem Lauf):**
+
+Die neuen Tasks sollten architektonisch genauso abgedeckt sein wie die bekannten —
+alle Guards, Policies und Kaskaden sind generisch, nicht task-spezifisch. Erwarte
+aber einen leicht niedrigeren Score als auf den bekannten 20/Split, weil:
+1. Unsere Fixes wurden durch Analyse der bekannten Tasks motiviert → Overfitting-Bias
+2. Neue Policy-Kombinationen oder Enum-Domänen könnten unabgedeckt sein
+3. Disambiguation: die 11 neuen Tasks (IDs 40–55) können Muster enthalten, die die
+   Kaskade nicht kennt
+
+**Erwartete Scores (Delta-Tasks allein):**
+- Base (30 Tasks): Pass^3 ~70-80% (bekannte: ~95%)
+- Hallucination (28 Tasks): Pass^3 ~65-75% (bekannte: ~80%)
+- Disambiguation (11 Tasks): Pass^3 ~45-55% (bekannte: ~65%)
+- Overall (69 Tasks): Pass^3 ~65-72%
+
+**Erwartete Scores (kombiniert, voller Train-Split 129 Tasks):**
+- Overall Pass^3: ~73-78%
+
+policy_aut_errors: weiterhin 0 erwartet (keine AUT-Policy-Verletzung).
+
+---
+
 ## 2026-07-11 — AUFTRAG I, Phase I3: Modellvergleich Opus-4-6 vs. Sonnet-4-6
 
 **Ziel:** Identisches Task-Set (18 Tasks aus H-Verifikation), identischer Code + Guards,
