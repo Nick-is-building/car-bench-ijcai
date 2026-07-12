@@ -60,20 +60,20 @@ class AuditorPreResponseTest(unittest.TestCase):
         self.assertEqual(res.safe_text, _HONEST_ADMISSION)
         self.assertTrue(any("99 minutes" in i for i in res.issues))
 
-    def test_declared_source_not_in_ledger_replaced(self):
+    def test_value_and_source_both_absent_replaced(self):
+        """Weder Wert noch source-Quote im Ledger → Satz wird ersetzt."""
         led = _ledger_with_tool_result("Estimated arrival in 42 minutes.")
         draft = Draft(
             claims=[ClaimCheck(
-                value="42 minutes",
-                sentence="You'll arrive in 42 minutes.",
-                source="the traffic service reported 42",
+                value="99 km",
+                sentence="Only 99 km to go.",
+                source="the traffic service reported 99 km",
             )],
-            response="You'll arrive in 42 minutes.",
+            response="Only 99 km to go.",
         )
         res = Auditor().pre_response_check(draft, led)
         self.assertFalse(res.passed)
         self.assertEqual(res.safe_text, _HONEST_ADMISSION)
-        self.assertTrue(any("declared source not in ledger" in i for i in res.issues))
 
     def test_non_numeric_claim_ignored_null_fp(self):
         led = _ledger_with_tool_result({"status": "available"})
@@ -169,6 +169,39 @@ class AuditorPreResponseTest(unittest.TestCase):
         res = Auditor().pre_response_check(draft, led, policy_notes=[self._ZONE_NOTE])
         self.assertFalse(res.passed)
         self.assertIn(_HONEST_ADMISSION, res.safe_text)
+
+    # --- Source-Check darf value_ok nicht killen (dis_38 zweiter Grund) ---
+
+    def test_value_ok_but_source_paraphrased_passes(self):
+        """Wenn der Wert im Ledger steht, ist die deklarierte source nur eine
+        Selbstannotation — sie darf einen paraphrased Quote nicht killen."""
+        led = _ledger_with_tool_result("Estimated arrival in 42 minutes.")
+        draft = Draft(
+            claims=[ClaimCheck(
+                value="42 minutes",
+                sentence="You'll arrive in 42 minutes.",
+                source="the tool result about ETA said 42",  # nicht wortwörtlich im Ledger
+            )],
+            response="You'll arrive in 42 minutes.",
+        )
+        res = Auditor().pre_response_check(draft, led)
+        self.assertTrue(res.passed)
+        self.assertIn("42 minutes", res.safe_text)
+
+    def test_value_not_in_ledger_source_verbatim_still_passes(self):
+        """Fallback: wenn der Wert nicht direkt im Corpus, aber die source-
+        Quote wortwörtlich, gilt der Claim als gedeckt."""
+        led = _ledger_with_tool_result("Estimated arrival in 42 minutes.")
+        draft = Draft(
+            claims=[ClaimCheck(
+                value="approximately 42",
+                sentence="ETA is approximately 42.",
+                source="Estimated arrival in 42 minutes.",
+            )],
+            response="ETA is approximately 42.",
+        )
+        res = Auditor().pre_response_check(draft, led)
+        self.assertTrue(res.passed)
 
 
 if __name__ == "__main__":

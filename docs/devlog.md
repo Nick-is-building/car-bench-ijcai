@@ -2703,3 +2703,39 @@ Response schreibt (Prompt schreibt „You MUST inform"). Bei LLM-Stochastik ggf.
 
 **Config:** `local_k2_mini.toml`, dis_38 × 3 Trials, seed 10. Freigabe ausstehend.
 Schätzung: ~$0.50. Erwartung: 0/3 → 2-3/3.
+
+## Phase K3 — Mini-Verify Fix 1 Ergebnis: dis_38 0/3 (Fix wirkte, aber zweiter Auditor-Bug)
+
+**Lauf 20260712-201022:** dis_38 weiter 0/3.  policy_llm_errors identisch:
+„driver 24° / passenger 17° → 7° Diff nicht mitgeteilt".
+
+**Zweiter Root Cause (aus Auditor-Log dis_38):**
+`Auditor.pre_response_check` meldete für ALLE vier Claims (24.0°C, level 2, 17.0°C,
+7 degrees) `(declared source not in ledger)` — d. h. `value_ok` war **True**
+(mein K2-Fix wirkt), aber der `source_ok`-Check killt trotzdem: der LLM formuliert
+im ClaimCheck-`source`-Feld eine PARAPHRASE („the tool result about ETA said 42")
+statt einer wortwörtlichen Ledger-Quote, und `claim.source.strip() in corpus` matcht
+nicht. Der Source-Check war zu strikt.
+
+## Phase K4 — Fix 1b: Source-Check nur als Fallback wenn value_ok fehlt
+
+**Fix (`auditor.py`):** Semantik umgedreht:
+- `value_ok` → immer PASS (der Zahlenwert ist gedeckt, source ist nur Selbstannotation)
+- `value_ok=False` + `source verbatim in corpus` → PASS (Fallback)
+- Beides fehlt → kill (unverändert)
+
+Der PRE-EXECUTE FabricationGuard bleibt unangetastet — er prüft ohne policy_notes und
+mit seinen eigenen strengeren Regeln.
+
+**Tests:** Der bestehende `test_declared_source_not_in_ledger_replaced` testete das
+alte Verhalten (value im Ledger + paraphrased source → kill) und ist obsolet — durch
+`test_value_and_source_both_absent_replaced` ersetzt (weder value noch source → kill,
+das eigentliche Missbrauchsszenario). Neue Tests: `test_value_ok_but_source_paraphrased_passes`
+und `test_value_not_in_ledger_source_verbatim_still_passes`. Suite: 280 passed,
+nur die 2 vorbestehenden OI-010-Fails.
+
+**Compliance-Notiz:** Das ist ein DESIGN-Fix eines zu strikten Source-Checks, kein
+Tuning gegen einen Evaluator-Subscore. Der Auditor darf einen ehrlichen Response
+nicht killen, nur weil der LLM die Ledger-Quote paraphrased hat.
+
+**Erwarteter Impact:** dis_38 0/3 → 2-3/3 (LLM-Stochastik bleibt).

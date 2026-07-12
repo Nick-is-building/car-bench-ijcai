@@ -69,16 +69,18 @@ class Auditor:
             if not re.search(r"\d", claim.value):
                 continue
             value_ok = _value_in_ledger(claim.value, corpus)
+            # Value in corpus is sufficient — the declared source is a
+            # self-annotation and often a paraphrase of the actual ledger
+            # quote (LLM formatting variance). Only fall back to source
+            # matching when the value itself is not backed.
+            if value_ok:
+                continue
             src = claim.source.strip().lower()
             source_declared = src not in ("", "inferred", "context", "none")
-            source_ok = (not source_declared) or claim.source.strip() in corpus
-            if value_ok and source_ok:
+            source_ok = source_declared and claim.source.strip() in corpus
+            if source_ok:
                 continue
-            issues.append(
-                f"{claim.value!r} unsupported"
-                + ("" if value_ok else " (value not in ledger)")
-                + ("" if source_ok else " (declared source not in ledger)")
-            )
+            issues.append(f"{claim.value!r} unsupported")
             if claim.sentence and claim.sentence in safe:
                 safe = safe.replace(claim.sentence, _HONEST_ADMISSION).strip()
 
