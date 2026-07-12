@@ -1,0 +1,30 @@
+# Auftrag K7 — Mini-Verifikation Fix 1 (Auditor) + Fix 2 (Confirmation-Template).
+# 2 Tasks × 3 Trials = 6 Runs, geschätzt ~$1.
+#
+# Targets:
+#   dis_38: 0/3 → 2-3/3 (Auditor akzeptiert policy_notes-Werte + value_ok Fallback)
+#   base_2: 1/3 → 3/3 (open_close_trunk_door Confirmation rendert action explizit)
+#
+# Regression: durch Fake-Tests + Fix 3 (dis_26) NICHT umgesetzt abgedeckt.
+#
+# Run: cd /home/Kathi/car-bench-ijcai && set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/k7_mini_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_k7_mini.toml \
+#      > _local/runs/k7_mini.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_2"]
+tasks_disambiguation_task_id_filter = ["disambiguation_38"]
+seed = 10
+max_steps = 50

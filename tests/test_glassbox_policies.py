@@ -798,6 +798,17 @@ class RequiresConfirmationToolTest(unittest.TestCase):
         self.assertNotIn(c, pf.kept)
         self.assertIn("trunk", pf.confirmations[0].question.lower())
 
+    def test_trunk_door_question_renders_action_argument(self):
+        """base_2 fix: real schema arg is `action` (OPEN/CLOSE) — the template
+        must render it explicitly instead of the '?' placeholder that made the
+        judge flag LLM-POL:007 non-compliance."""
+        ledger = make_ledger()
+        c = call("open_close_trunk_door", {"action": "OPEN"})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        q = pf.confirmations[0].question
+        self.assertIn("action='OPEN'", q)
+        self.assertNotIn("'?'", q)
+
     def test_trunk_door_passes_after_user_confirms(self):
         ledger = make_ledger()  # turn 0
         ledger.add_agent_response("I'd like to operate the trunk door.")

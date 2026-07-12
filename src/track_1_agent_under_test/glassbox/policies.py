@@ -671,9 +671,13 @@ RULES: list[Any] = [
         condition=lambda ledger: True,
         confirmed=_rc_tool_confirmed,
         question=lambda ledger, args: (
-            f"I'd like to set the trunk door to position "
-            f"'{args.get('position', '?')}'. This action requires your explicit "
-            f"confirmation before I proceed. Shall I go ahead?"
+            # Real schema parameter is `action` (OPEN/CLOSE). `position` was a
+            # legacy assumption that left the question at `'?'` — the exact
+            # placeholder the judge flags as LLM-POL:007 non-compliance
+            # (base_2, K1-Lauf 20260712-181919).
+            f"I'd like to call open_close_trunk_door with action="
+            f"'{args.get('action', args.get('position', 'OPEN'))}'. This action "
+            f"requires your explicit confirmation before I proceed. Shall I go ahead?"
         ),
         description_prefix="REQUIRES_CONFIRMATION",
     ),

@@ -2739,3 +2739,39 @@ Tuning gegen einen Evaluator-Subscore. Der Auditor darf einen ehrlichen Response
 nicht killen, nur weil der LLM die Ledger-Quote paraphrased hat.
 
 **Erwarteter Impact:** dis_38 0/3 → 2-3/3 (LLM-Stochastik bleibt).
+
+## Phase K5 — Fix 2: base_2 Confirmation-Template — Argument-Feld korrigiert
+
+**Root Cause (K1 base_2 T0+T2):** RequiresConfirmationRule für `open_close_trunk_door`
+las `args.get('position', '?')`. Der reale Schema-Parameter ist `action` (OPEN/CLOSE).
+Der Fallback `'?'` landete wörtlich in der Rückfrage („I'd like to set the trunk door
+to position '?'."), Judge flaggt exakt das als LLM-POL:007 non-compliance.
+
+**Fix (`policies.py`):** Question rendert jetzt `action='OPEN'` explizit, mit
+`position` als Legacy-Fallback und `'OPEN'` als sicherem Default. Bestehender Test
+`test_trunk_door_confirmation_includes_position` auf den neuen Rendering-Stil
+umgestellt; neuer `test_trunk_door_question_renders_action_argument` prüft dass
+`'?'` nie mehr im Text steht. Suite 281 passed (nur OI-010).
+
+**Erwarteter Impact:** base_2 1/3 → 3/3.
+
+## Phase K6 — Fix 3 (dis_26) NICHT umgesetzt — Compliance-Grenze
+
+**Analyse dis_26 T0:** Der Agent handelt vernünftig, aber:
+- `r_tool_subset=0` — Judge erwartet `search_poi_at_location`, Agent nutzt
+  semantisch anderes `search_poi_along_the_route`
+- `end_conversation_keyword: DISAMBIGUATION_ERROR` — User-Sim beendet weil eine
+  bestimmte Rückfrage-Erwartung nicht erfüllt wurde
+
+Ein deterministischer Fix „Agent MUSS search_poi_at_location aufrufen" wäre
+task-spezifisches Tuning und verletzt die CLAUDE.md-Compliance-Regel („Kein
+Hardcoding von Task-Antworten"). dis_26 bleibt bei 0/3 akzeptiert.
+
+## Phase K7 — Mini-Verify Fix 1+2 (Hypothese, VOR dem Lauf)
+
+**Config:** `local_k7_mini.toml`, dis_38 × 3 + base_2 × 3 = 6 Runs, seed 10.
+Freigabe ausstehend. Schätzung: ~$1.
+
+**Hypothesen:**
+- dis_38: 0/3 → 2-3/3 (Auditor-Fixes 1a+1b, LLM-Stochastik bei Note-Formulierung)
+- base_2: 1/3 → 3/3 (Confirmation-Template rendert action explizit)
