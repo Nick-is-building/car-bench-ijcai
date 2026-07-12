@@ -2844,3 +2844,21 @@ Suite: 285 passed (nur OI-010).
 
 **Erwarteter Impact:** base_10 2/3 → 3/3, dis_38 2/3 → 3/3 (gleiche Klasse). +2 Tasks.
 Potentiell weitere Silent-Refusal-Fälle in der Test-Suite die K1 nicht erfasst hat.
+
+## Phase K10 — Ergebnis Mini-Verify Fix 4: 6/6 = 100% ✅
+
+**Lauf 20260712-213857:**
+- base_10 2/3 → **3/3** ✅
+- dis_38 0/3 → **3/3** ✅ (Kombination Fix 1a/b/c + Fix 4)
+
+Der Silent-Refusal-Guard-Erweiterung nach Read-only-Calls wirkt vollständig. Der
+Agent führt jetzt fog_lights auch bei „cloudy weather" aus (User-Wunsch überstimmt
+Policy-Interpretation) und steering_wheel_heating wird nicht mehr fälschlich als
+„unavailable" verweigert.
+
+**Kumulativer Impact Auftrag K (auf den 30 K1-Tasks):**
+- Base: 2/5 → 4/5 (+base_2, +base_10)  · offen: base_30 T1 (LLM-Stochastik)
+- Hall: 3/5 unverändert  · hall_28, hall_32 OI-020 akzeptiert
+- Dis: 12/20 → 13/20 (+dis_38)  · dis_20 T1, dis_32 T1 LLM-Stochastik
+- Overall K1-Set: 17/30 → **20/30 (66.7%)** — Steigerung von 56.7% auf 66.7% durch
+  Auftrag K.
