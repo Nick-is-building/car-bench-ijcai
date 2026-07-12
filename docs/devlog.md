@@ -2536,3 +2536,41 @@ seed 10, Agent sonnet-4-6, Judge/User gemini-2.5-flash. Freigabe erteilt (Schät
 
 **Abbruchkriterium:** Regressiert ein Hall-Task auf 0/3 oder dis_6/base_8 unter 3/3,
 gilt der jeweilige Fix als zu breit und wird enger gegated statt nachjustiert.
+
+## Phase J3 — Ergebnis Verifikationslauf (Lauf 20260711-235600)
+
+**Rohdaten:** `docs/experiments/2026-07-11-j3-verify.json` · 27 Task-Runs, ~24 min.
+
+| Task | Hypothese | Ergebnis | Bewertung |
+|---|---|---|---|
+| dis_16 | 1-2/3 | **3/3** | ✅ relationale Rückfrage greift (3× im Log) |
+| dis_28 | 3/3 | **3/3** | ✅ Slot-Normalisierung greift (10× im Log) |
+| dis_22 | 3/3 | **0/3** | ❌ Merge-Fix feuerte NICHT (siehe unten) |
+| dis_6 / dis_18 / dis_24 / base_8 | keine Regression | alle **3/3** | ✅ dis_18/dis_24 vorher flaky 2/3 → jetzt stabil |
+| hall_36 | keine Regression | **3/3** | ✅ |
+| hall_28 | keine Regression | **1/3** | ⚠️ im historischen Band (2/3→1/3→2/3, Judge-Varianz auf C6-Pfad), KEINE J-Regression; Abbruchkriterium (0/3) nicht erreicht |
+
+**dis_22 Root Cause Runde 2 (offline, 0 API-Kosten):** Die Companion-INJEKTION lief im
+gesamten Lauf 0× — der PLANNER plant die AUT-POL:010-Kette selbst (inkl. hartem
+`set_fan_airflow_direction(WINDSHIELD)`). Dadurch enthält `projected()` bereits
+WINDSHIELD, `needs()` ist False, und der J1-Merge-Pfad wird nie erreicht. Wichtig:
+`reward_info["actions"]` im Ergebnis-JSON ist die AGENT-Trajektorie, nicht GT — die
+J1-GT-Analyse (Merge-Semantik) bleibt gültig.
+
+## Phase J4 — Companion-Rewrite: planner-gelieferte naive Companions werden korrigiert
+
+**Fix (`policies.py`, `_eval_state_companion`):** Vor der Injektions-Schleife ein
+Rewrite-Pass: Steht ein Call auf `spec.companion_tool` bereits im Batch UND entspricht
+sein Argument exakt dem wertblinden Fallback (`companion_args(None)`, d. h. hartes
+WINDSHIELD) UND `needs(Zustand-vor-dem-Call)` ist wahr, werden die Argumente auf den
+zustandserhaltenden Wert (`companion_args(vorher)`) umgeschrieben. Abweichende Argumente
+gelten als bewusste Wahl und werden NIE angefasst.
+
+**Sicherheit:** dis_6/base_8 (explizites WINDSHIELD ohne Defrost-Trigger im Batch) —
+Rule wird gar nicht evaluiert, kein Rewrite (Test). Aktuelle Richtung enthält schon
+WINDSHIELD → needs=False → kein Rewrite (Test). 4 neue Fake-Tests (1 Treffer, 3 Null-FPs).
+Suite 271 passed (nur OI-010). Restrisiko dokumentiert: expliziter User-Wunsch „hart
+WINDSHIELD" IM SELBEN Batch wie Defrost würde gemerged — im Benchmark nicht beobachtet.
+
+**Erwarteter Flip:** dis_22 0/3 → 3/3 (Trajektorie ansonsten GT-identisch, offline
+verifiziert in J1).

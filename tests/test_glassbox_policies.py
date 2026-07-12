@@ -404,6 +404,60 @@ class StateCompanionTest(unittest.TestCase):
         self.assertEqual(_airflow_merge_windshield(None),
                          {"direction": "WINDSHIELD"})
 
+    # --- Planner-supplied companions: naive WINDSHIELD wird zum Merge umgeschrieben ---
+
+    def _defrost_with_planned_airflow(self, climate: dict, direction: str):
+        ledger = make_ledger()
+        observe(ledger, "get_climate_settings", climate)
+        defrost = call("set_window_defrost",
+                       {"defrost_window": "FRONT", "on": True}, "p0")
+        airflow = call("set_fan_airflow_direction",
+                       {"direction": direction}, "p1")
+        return pre_flight([defrost, airflow], ledger), defrost, airflow
+
+    def test_defrost_planner_supplied_windshield_rewritten_to_merge(self):
+        """dis_22: planner plans the companion itself with the naive hard value;
+        its effect pre-empts needs() → rewrite to the state-preserving merge."""
+        pf, defrost, airflow = self._defrost_with_planned_airflow(
+            {"fan_speed": 2, "fan_airflow_direction": "FEET",
+             "air_conditioning": True}, "WINDSHIELD")
+        self.assertEqual(airflow.arguments, {"direction": "WINDSHIELD_FEET"})
+        self.assertEqual(pf.injected, [])
+        self.assertEqual(pf.kept, [defrost, airflow])
+
+    def test_defrost_planner_explicit_direction_not_rewritten_null_fp(self):
+        """An argument that differs from the value-blind fallback is treated as
+        deliberate and never touched; the policy injects its merge separately."""
+        pf, _, airflow = self._defrost_with_planned_airflow(
+            {"fan_speed": 2, "fan_airflow_direction": "HEAD",
+             "air_conditioning": True}, "FEET")
+        self.assertEqual(airflow.arguments, {"direction": "FEET"})
+        self.assertEqual([(i.tool, i.arguments) for i in pf.injected],
+                         [("set_fan_airflow_direction",
+                           {"direction": "WINDSHIELD_FEET"})])
+
+    def test_defrost_planner_windshield_untouched_when_already_included_null_fp(self):
+        """Current direction already includes WINDSHIELD → needs() is False →
+        the planner's call counts as a deliberate change and stays as-is."""
+        pf, _, airflow = self._defrost_with_planned_airflow(
+            {"fan_speed": 2, "fan_airflow_direction": "WINDSHIELD_HEAD",
+             "air_conditioning": True}, "WINDSHIELD")
+        self.assertEqual(airflow.arguments, {"direction": "WINDSHIELD"})
+        self.assertEqual(pf.injected, [])
+
+    def test_airflow_alone_without_defrost_trigger_untouched_null_fp(self):
+        """Explicit user wish (dis_6/base_8): hard WINDSHIELD without a defrost
+        trigger in the batch — the rule never evaluates, nothing is rewritten."""
+        ledger = make_ledger()
+        observe(ledger, "get_climate_settings",
+                {"fan_speed": 2, "fan_airflow_direction": "FEET",
+                 "air_conditioning": True})
+        airflow = call("set_fan_airflow_direction", {"direction": "WINDSHIELD"})
+        pf = pre_flight([airflow], ledger)
+        self.assertEqual(airflow.arguments, {"direction": "WINDSHIELD"})
+        self.assertEqual(pf.injected, [])
+        self.assertEqual(pf.kept, [airflow])
+
 
 # ---------------------------------------------------------------------------
 # no_parallel — AUT-POL:018 waypoint edits strictly sequential

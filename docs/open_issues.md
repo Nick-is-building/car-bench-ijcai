@@ -701,6 +701,15 @@ war falsch gelabelt.
 Token-Subset-Unikat, sonst None) + `relative_steps`-Extraktion (nur explizit genannte
 Zahlen) mit magnitude-Anwendung inkl. Bounds-Clamping. 10 Fake-Tests inkl. Null-FPs.
 
+**Nachtrag J3/J4 (dis_22):** Der J1-Merge feuerte im Lauf 20260711-235600 nicht, weil
+der Planner die Companion-Kette selbst plant (hartes WINDSHIELD) und `projected()`
+dadurch `needs()` vorwegnimmt. J4-Fix: Rewrite-Pass in `_eval_state_companion` —
+planner-gelieferte Companion-Calls, die exakt dem wertblinden Fallback entsprechen,
+werden auf den zustandserhaltenden Wert umgeschrieben (4 Tests, 3 Null-FPs).
+Restrisiko: expliziter „hart WINDSHIELD"-Wunsch im selben Batch wie Defrost würde
+gemerged — im Benchmark nicht beobachtet. J2-Fixes verifiziert: dis_16 3/3, dis_28 3/3,
+dis_18/dis_24 stabilisiert auf 3/3.
+
 ## OI-022 — Relationale Compound-Requests liefen in den Refusal-Pfad (dis_16) ✅ BEHOBEN (J2)
 **Entdeckt:** 2026-07-11 (Auftrag J)  **Stufe:** CAPABILITY_CHECK
 

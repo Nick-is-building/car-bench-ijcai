@@ -1051,6 +1051,34 @@ def _eval_state_companion(rule: StateCompanionRule, env: _Env) -> None:
                     f"{fields} could not be verified deterministically"
                 )
             continue
+        # Planner-supplied companions pre-empt the injection path: their effect
+        # is already in projected(), so needs() never fires and value-dependent
+        # args (Airflow-Merge) would silently stay at the planner's naive value.
+        # Rewrite ONLY calls that exactly match the value-blind fallback
+        # (companion_args(None)) — an explicitly different user value is never
+        # touched — to the value derived from the pre-call state.
+        for spec in rule.companions:
+            if not callable(spec.companion_args):
+                continue
+            naive_args = spec.companion_args(None)
+            for planned in env.result.kept:
+                if planned.tool != spec.companion_tool:
+                    continue
+                if planned.arguments != naive_args:
+                    continue
+                before = env.projected_before(planned)
+                if spec.state_field not in before:
+                    continue
+                if not spec.needs(before.get(spec.state_field)):
+                    continue
+                correct = spec.companion_args(before.get(spec.state_field))
+                if correct != planned.arguments:
+                    planned.arguments = correct
+                    env.result.notes.append(
+                        f"{rule.policy_id}: rewrote planner-supplied companion "
+                        f"{spec.companion_tool} to the state-preserving value"
+                    )
+        projected = env.projected()
         for spec in rule.companions:
             value = projected.get(spec.state_field)
             required = spec.state_field not in projected or spec.needs(value)
