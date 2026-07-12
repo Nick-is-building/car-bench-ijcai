@@ -1,0 +1,32 @@
+# Auftrag K10 — Mini-Verifikation Fix 4 (Silent-Refusal nach Read-only).
+# 2 Tasks × 3 Trials = 6 Runs, geschätzt ~$1.
+#
+# Targets:
+#   base_10: 2/3 → 3/3 (fog_lights bei weather=cloudy nicht mehr silent-refused)
+#   dis_38:  2/3 → 3/3 (steering_wheel_heating T1 nicht mehr silent-refused;
+#                        Fix 1a/b/c bleibt aktiv für Zonentemp-Diff)
+#
+# Regression: durch Suite (285 passed, Null-FP-Test Read-Only-Detection) + 2
+# angepasste bestehende Tests (intent_weather-Fixture) abgedeckt.
+#
+# Run: cd /home/Kathi/car-bench-ijcai && set -a && source .env && set +a && \
+#      setsid --fork bash -c 'AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/k10_mini_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_k10_mini.toml \
+#      > _local/runs/k10_mini.log 2>&1' < /dev/null &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+tasks_base_task_id_filter = ["base_10"]
+tasks_disambiguation_task_id_filter = ["disambiguation_38"]
+seed = 10
+max_steps = 50

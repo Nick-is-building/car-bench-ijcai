@@ -98,7 +98,8 @@ class ScenarioContractTest(unittest.TestCase):
                                          "local_j4_mini.toml",
                                          "local_k1_verify.toml",
                                          "local_k2_mini.toml",
-                                         "local_k7_mini.toml"}
+                                         "local_k7_mini.toml",
+                                         "local_k10_mini.toml"}
                 }
                 self.assertEqual(files, EXPECTED_SCENARIO_FILES)
 
