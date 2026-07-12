@@ -327,30 +327,51 @@ class StateMachine:
                 # required tools that ARE in the catalog. One bounded re-plan
                 # with an explicit note — the planner may have overlooked an
                 # available tool (e.g. open_close_trunk_door).
+                #
+                # K-Fix (base_10 T1, dis_38 T1): also fire when the agent has
+                # only run read-only tools (get_/search_) so far but refuses to
+                # take the state-changing action the user explicitly asked for.
+                # The refusal typically comes from an over-eager policy read
+                # (e.g. "fog lights only in thunderstorm") that the user's
+                # explicit request must override. Any state-changing tool
+                # already executed means the plan is genuinely progressing and
+                # the guard steps back.
                 if (not ctx.silent_refusal_replan
-                        and not ctx.executed_signatures
                         and ctx.capability_rebuttals == 0):
-                    from .capability import CapabilityIndex
-                    idx = CapabilityIndex(ctx.tools)
-                    covered_required = [
-                        t for t in ctx.intent.get("required_tools", [])
-                        if idx.has_tool(t)
-                    ]
-                    if covered_required:
-                        ctx.silent_refusal_replan = True
-                        ctx.policy_notes.append(
-                            "PLAN-GUARD: you returned no tool calls, but the "
-                            "following tools ARE available in the catalog and "
-                            "were identified as required: "
-                            + ", ".join(covered_required)
-                            + ". If the user's request can be fulfilled with "
-                            "these tools, plan the necessary steps."
-                        )
-                        _log.info(
-                            "Silent-refusal guard: re-plan with available tools",
-                            covered_required=covered_required,
-                        )
-                        continue
+                    non_read_only_executed = any(
+                        not (s.startswith("get_") or s.startswith("search_"))
+                        for s in ctx.executed_signatures
+                    )
+                    if not non_read_only_executed:
+                        from .capability import CapabilityIndex
+                        idx = CapabilityIndex(ctx.tools)
+                        required = ctx.intent.get("required_tools", [])
+                        covered_required = [t for t in required if idx.has_tool(t)]
+                        executed_tool_names = {
+                            s.split(":", 1)[0] for s in ctx.executed_signatures
+                        }
+                        pending_required = [
+                            t for t in covered_required
+                            if t not in executed_tool_names
+                        ]
+                        if pending_required:
+                            ctx.silent_refusal_replan = True
+                            ctx.policy_notes.append(
+                                "PLAN-GUARD: you returned no tool calls, but "
+                                "the user explicitly requested an action whose "
+                                "tools ARE available in the catalog: "
+                                + ", ".join(pending_required)
+                                + ". A general safety/weather policy is a "
+                                "recommendation, not a veto over an explicit "
+                                "user request. Plan the necessary steps to "
+                                "fulfill what the user asked for."
+                            )
+                            _log.info(
+                                "Silent-refusal guard: re-plan with available tools",
+                                covered_required=pending_required,
+                                already_executed=sorted(executed_tool_names),
+                            )
+                            continue
                 break
 
             calls: list[PlannedCall] = []

@@ -2806,3 +2806,41 @@ gedeckt (Treffer), (b) Zone-Note deckt keine ETA-Fabrikation (Null-FP).
 Suite: 283 passed (nur OI-010).
 
 **Erwarteter Impact:** dis_38 0/3 → 2-3/3 (LLM-Stochastik bei Note-Formulierung).
+
+## Phase K9 — Ergebnis Mini-Verify Fix 1c: dis_38 0/3 → 2/3 ✅
+
+**Lauf 20260712-210132:** dis_38 Pass^1=100%, Pass^3=0% (2/3 gepasst, T1 gefailt).
+Fix 1c wirkt vollständig — T0+T2 rendern sauber „7 degree difference to the passenger
+zone". T1-Fail hat einen ANDEREN Grund: Agent behauptet `set_steering_wheel_heating`
+sei nicht verfügbar (`OUT_OF_SCOPE`), obwohl das Tool im Katalog steht. Selbe Klasse
+wie base_10 T1.
+
+## Phase K10 — Fix 4: Silent-Refusal-Guard erweitert für Read-only-then-refuse
+
+**Root Cause (K1 base_10 T1, K9 dis_38 T1):** Der Agent führt zunächst nur Read-Tools
+aus (`get_weather`, `get_exterior_lights_status`), interpretiert deren Ergebnis als
+Policy-Vorbedingung („fog lights only in thunderstorm", „no tool available") und
+verweigert die vom User EXPLIZIT gewünschte state-changing Aktion. Der bestehende
+F2-Silent-Refusal-Guard greift nicht, weil `executed_signatures` bereits nicht leer
+ist.
+
+**Fix (`state_machine.py`):** Guard-Bedingung erweitert — statt `not executed_signatures`
+prüft der Guard jetzt `not non_read_only_executed`: nur Getter (`get_...`) und Sucher
+(`search_...`) zählen NICHT als „Progress". Wenn nach reinen Reads der Planner leer
+zurückkommt und ein `required_tool` aus INTAKE im Katalog verfügbar und noch nicht
+ausgeführt ist, feuert der Rebuttal mit dem Hinweis „A general safety/weather policy
+is a recommendation, not a veto over an explicit user request."
+
+**Regressions-Anpassung (2 Tests):** `test_execute_time_unknown_param_is_stripped_and_call_proceeds`
+und `test_bound_not_flagged_on_normal_completion` verwendeten `intent_ok()` (required:
+open_close_sunroof) mit einem `get_weather`-Plan — genau das Silent-Refusal-Muster.
+Beide auf neue `intent_weather()`-Fixture (informational, `required_tools=["get_weather"]`,
+`is_state_changing=False`) umgestellt.
+
+**Fake-Tests:** 2 neue in SilentRefusalGuardTest — (a) Guard feuert nach reinem
+get_weather bei pending set_fog_lights, PLAN-GUARD-Note enthält den Tool-Namen,
+(b) Direct-Unit-Check der Read-Only-Detection (set_ nicht read-only, get_ ist es).
+Suite: 285 passed (nur OI-010).
+
+**Erwarteter Impact:** base_10 2/3 → 3/3, dis_38 2/3 → 3/3 (gleiche Klasse). +2 Tasks.
+Potentiell weitere Silent-Refusal-Fälle in der Test-Suite die K1 nicht erfasst hat.
