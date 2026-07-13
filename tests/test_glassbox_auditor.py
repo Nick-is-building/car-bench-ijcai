@@ -97,6 +97,9 @@ class AuditorPreResponseTest(unittest.TestCase):
         self.assertEqual(res.safe_text, "Done.")
 
     def test_multiple_claims_one_unsupported(self):
+        """Fix 7: an unsupported sentence is stripped, not replaced by the
+        HONEST_ADMISSION placeholder — the placeholder was polluting otherwise
+        good answers (base_82/84, dis_54)."""
         led = _ledger_with_tool_result("Estimated arrival in 42 minutes, 15 km remaining.")
         draft = Draft(
             claims=[
@@ -109,7 +112,7 @@ class AuditorPreResponseTest(unittest.TestCase):
         self.assertFalse(res.passed)
         self.assertIn("ETA is 42 minutes.", res.safe_text)
         self.assertNotIn("30 km", res.safe_text)
-        self.assertIn(_HONEST_ADMISSION, res.safe_text)
+        self.assertNotIn(_HONEST_ADMISSION, res.safe_text)  # stripped, not placeholdered
         self.assertEqual(len(res.issues), 1)
 
     # --- OI-008 / dis_38: values from policy_notes count as supported ---
@@ -139,7 +142,8 @@ class AuditorPreResponseTest(unittest.TestCase):
         self.assertIn("7°C difference", res.safe_text)
 
     def test_value_without_policy_note_still_replaced_null_fp(self):
-        """Without the note the 7°C claim has no ledger backing → replaced."""
+        """Without the note the 7°C claim has no ledger backing → stripped
+        (Fix 7: no HONEST_ADMISSION placeholder mid-reply)."""
         led = _ledger_with_tool_result({"climate_temperature_driver": 26,
                                         "climate_temperature_passenger": 17})
         draft = Draft(
@@ -152,10 +156,14 @@ class AuditorPreResponseTest(unittest.TestCase):
         )
         res = Auditor().pre_response_check(draft, led)
         self.assertFalse(res.passed)
-        self.assertIn(_HONEST_ADMISSION, res.safe_text)
+        self.assertNotIn("7°C", res.safe_text)      # unsupported claim removed
+        self.assertNotIn(_HONEST_ADMISSION, res.safe_text)  # not injected
+        self.assertIn("Done", res.safe_text)         # legitimate part kept
 
     def test_fabricated_value_with_unrelated_policy_note_still_replaced_null_fp(self):
-        """A policy_note about zones does NOT rescue an ETA fabrication."""
+        """A policy_note about zones does NOT rescue an ETA fabrication.
+        Fix 7: stripping the only claim empties the reply — fall back to the
+        HONEST_ADMISSION placeholder so the turn still says something."""
         led = _ledger_with_tool_result({"climate_temperature_driver": 26,
                                         "climate_temperature_passenger": 17})
         draft = Draft(
@@ -168,6 +176,7 @@ class AuditorPreResponseTest(unittest.TestCase):
         )
         res = Auditor().pre_response_check(draft, led, policy_notes=[self._ZONE_NOTE])
         self.assertFalse(res.passed)
+        # single-claim reply → strip empties it → fallback placeholder used
         self.assertIn(_HONEST_ADMISSION, res.safe_text)
 
     # --- Source-Check darf value_ok nicht killen (dis_38 zweiter Grund) ---

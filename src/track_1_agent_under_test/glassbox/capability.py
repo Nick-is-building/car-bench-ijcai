@@ -68,6 +68,18 @@ class CapabilityIndex:
         cap = self._caps.get(tool_name)
         return cap is not None and param_name in cap.parameters
 
+    def missing_required(self, tool_name: str, arguments: dict) -> list[str]:
+        """Fix 6/3 — required schema parameters absent from arguments.
+
+        Deterministic (Lesson 1a): reads the tool's schema.required list and
+        returns the missing names. Prevents FAILURE calls like base_96 T0's
+        get_weather without time_hour_24hformat that killed r_tool_execution.
+        """
+        cap = self._caps.get(tool_name)
+        if cap is None:
+            return []
+        return [p for p in cap.required_params if p not in arguments]
+
     def enum_values(self, tool_name: str, param_name: str) -> list | None:
         """Allowed enum values for a parameter, or None if the schema defines none.
 

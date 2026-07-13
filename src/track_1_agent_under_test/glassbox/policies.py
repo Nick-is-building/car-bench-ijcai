@@ -484,6 +484,166 @@ def _weather_confirmation_question(action_builder: Callable[[dict], str]) -> Cal
     return build
 
 
+# --- Fix 2: Route-Choice-Presentation — no proactive single-stop set/replace ---
+# For a single-stop set/replace the policy requires presenting fastest + shortest
+# in detail, mentioning alternative count and toll, then asking the user which
+# to start. Trigger fires only when the ledger has ≥2 route alternatives AND the
+# user has NOT explicitly picked one yet. Multi-stop (route_ids has ≥2 legs)
+# stays on LLM-POL:022 (fastest per segment, no confirmation gate).
+
+_ROUTE_PICK_PATTERNS = re.compile(
+    r"\b("
+    r"fastest|quickest|shortest|"
+    r"first (?:one|route|option)|second (?:one|route|option)|"
+    r"third (?:one|route|option)|1st|2nd|3rd|"
+    r"via [A-Z0-9]+"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Confirmation phrases the user says AFTER route options were presented
+# (base_82 T2: "Yes, let's go with that one!"; base_84 T0 selects via
+# "the second route option"). Kept separate from pick-patterns to avoid
+# false positives — a bare "yes" only counts if the assistant had presented
+# alternatives in an earlier turn.
+_POST_PRESENTATION_CONFIRMS = re.compile(
+    r"\b(yes|yeah|yep|ok|okay|sure|go for it|go ahead|use (?:that|this|it)|"
+    r"do it|please do|sounds good)\b",
+    re.IGNORECASE,
+)
+
+
+def _iter_route_meta_from_ledger(ledger: Ledger):
+    """Yield each route alternative from any get_routes_from_start_to_destination
+    result recorded in this ledger. Read-only; parses tolerantly."""
+    for e in ledger.entries:
+        if e.kind != "tool_result":
+            continue
+        if e.tool_name != "get_routes_from_start_to_destination":
+            continue
+        payload = _parse_result_payload(e.content)
+        if payload is None or payload.get("status") != "SUCCESS":
+            continue
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            continue
+        routes = result.get("routes")
+        if isinstance(routes, list):
+            for r in routes:
+                if isinstance(r, dict):
+                    yield r
+
+
+def _relevant_route_alternatives(ledger: Ledger, args: dict) -> list[dict]:
+    """Alternatives whose (start_id, destination_id) match the referenced route
+    in this call. For set_new_navigation the referenced route is the first id
+    in route_ids; for a replace-destination the reference is
+    route_id_leading_to_new_destination.
+    """
+    ref_ids: list[str] = []
+    for key in ("route_id_leading_to_new_destination", "route_id_leading_to_new_waypoint"):
+        val = args.get(key)
+        if isinstance(val, str):
+            ref_ids.append(val)
+    route_ids = args.get("route_ids")
+    if isinstance(route_ids, list) and route_ids:
+        first = route_ids[0]
+        if isinstance(first, str):
+            ref_ids.append(first)
+    all_routes = list(_iter_route_meta_from_ledger(ledger))
+    # find the reference metadata
+    ref_start = ref_end = None
+    for r in all_routes:
+        if r.get("route_id") in ref_ids:
+            ref_start = r.get("start_id")
+            ref_end = r.get("destination_id")
+            break
+    if ref_start is None or ref_end is None:
+        return []
+    return [r for r in all_routes
+            if r.get("start_id") == ref_start and r.get("destination_id") == ref_end]
+
+
+def _has_multi_alternatives(ledger: Ledger, args: dict) -> bool:
+    """Fix 2 gate: at least two candidate routes match the referenced leg."""
+    return len(_relevant_route_alternatives(ledger, args)) >= 2
+
+
+def _user_picked_route(ledger: Ledger) -> bool:
+    """True if the user explicitly asked for a specific route (fastest/shortest/
+    Nth) OR replied affirmatively AFTER the assistant presented alternatives."""
+    presented_turn = None
+    for e in ledger.entries:
+        if e.kind != "agent":
+            continue
+        text = str(e.content or "")
+        if "alternative" in text.lower() and re.search(r"\d", text):
+            presented_turn = e.turn
+            break
+    for e in ledger.entries:
+        if e.kind != "user":
+            continue
+        text = str(e.content or "")
+        if _ROUTE_PICK_PATTERNS.search(text):
+            return True
+        if presented_turn is not None and e.turn > presented_turn:
+            if _POST_PRESENTATION_CONFIRMS.search(text):
+                return True
+    return False
+
+
+def _single_stop_set(args: dict) -> bool:
+    """Fix 2 trigger gate for set_new_navigation: single-stop (one leg) only.
+    Multi-stop is handled by the existing LLM-POL:022 obligation note."""
+    route_ids = args.get("route_ids")
+    return isinstance(route_ids, list) and len(route_ids) == 1
+
+
+def _route_presentation_question(ledger: Ledger, args: dict) -> str:
+    alts = _relevant_route_alternatives(ledger, args)
+    # sort by duration, then distance — deterministic ordering
+    def _key(r):
+        d = r.get("duration_hours") if isinstance(r.get("duration_hours"), (int, float)) else 999
+        km = r.get("distance_km") if isinstance(r.get("distance_km"), (int, float)) else 0
+        return (d, km)
+    alts_sorted = sorted(alts, key=_key)
+    fastest = alts_sorted[0] if alts_sorted else None
+    shortest = min(alts, key=lambda r: r.get("distance_km") if isinstance(r.get("distance_km"), (int, float)) else 999999) if alts else None
+
+    def _fmt(r: dict) -> str:
+        via = r.get("name_via", "")
+        km = r.get("distance_km")
+        hrs = r.get("duration_hours")
+        mins = r.get("duration_minutes")
+        toll = " with toll roads" if r.get("includes_toll") else ""
+        parts = []
+        if via:
+            parts.append(f"via {via}")
+        if isinstance(km, (int, float)):
+            parts.append(f"{km} km")
+        if isinstance(hrs, (int, float)):
+            hm = f"{int(hrs)}h"
+            if isinstance(mins, (int, float)) and mins:
+                hm += f" {int(mins)}m"
+            parts.append(hm)
+        return ", ".join(parts) + toll if parts else "route"
+
+    lines = []
+    if fastest is not None:
+        lines.append(f"Fastest: {_fmt(fastest)}")
+    if shortest is not None and shortest is not fastest:
+        lines.append(f"Shortest: {_fmt(shortest)}")
+    others = max(0, len(alts) - len({id(fastest), id(shortest)} - {id(None)}))
+    tail = ""
+    if others > 0:
+        tail = f" There are {others} more alternative(s) if you'd like to hear them."
+    body = " ".join(lines)
+    return (
+        f"I found multiple route options. {body}. Which route would you like "
+        f"me to start — the fastest or the shortest?{tail}"
+    )
+
+
 # --- OI-008: LLM-POL:012 zone temperature >3°C note helper ---
 
 def _zone_temp_note(a: dict, s: dict) -> str | None:
@@ -829,6 +989,32 @@ RULES: list[Any] = [
         trigger_tool="set_climate_temperature",
         note=_zone_temp_note,
     ),
+    # --- Fix 2: route-choice presentation for single-stop set / replace ---
+    # Wiki: single-stop with ≥2 alternatives → present fastest+shortest, ask
+    # the user which to start. Proactive selection is a policy break (base_82,
+    # dis_46, dis_52). Multi-stop stays on LLM-POL:022 below.
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:022-single",
+        trigger_tool="set_new_navigation",
+        when=_single_stop_set,
+        condition=lambda ledger: True,  # we only check has_multi_alt inside
+        confirmed=_user_picked_route,
+        question=_route_presentation_question,
+    ),
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:022-single",
+        trigger_tool="navigation_replace_final_destination",
+        condition=lambda ledger: True,
+        confirmed=_user_picked_route,
+        question=_route_presentation_question,
+    ),
+    RequiresConfirmationRule(
+        policy_id="LLM-POL:022-single",
+        trigger_tool="navigation_replace_one_waypoint",
+        condition=lambda ledger: True,
+        confirmed=_user_picked_route,
+        question=_route_presentation_question,
+    ),
     # --- LLM-POL:022 — fastest route for multi-stop navigation (OI-012) ---
     ObligationNoteRule(
         policy_id="LLM-POL:022",
@@ -1158,6 +1344,13 @@ def _eval_requires_confirmation(rule: RequiresConfirmationRule, env: _Env) -> No
         if rule.description_prefix is not None:
             cap = env.index.get_tool(call.tool)
             if cap is None or not cap.description.startswith(rule.description_prefix):
+                continue
+        # Fix 2: for the route-choice presentation gate, only fire when the
+        # ledger actually holds multiple alternative routes for the referenced
+        # leg — otherwise proceed as normal (no artificial confirmation for
+        # single-alt legs, no false positive when routes have not been queried).
+        if rule.policy_id == "LLM-POL:022-single":
+            if not _has_multi_alternatives(env.ledger, call.arguments):
                 continue
         if not rule.condition(env.ledger):        # precondition absent/unknown → Null-FP
             continue

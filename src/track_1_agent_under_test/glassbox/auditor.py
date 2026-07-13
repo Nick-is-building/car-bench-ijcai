@@ -82,7 +82,17 @@ class Auditor:
                 continue
             issues.append(f"{claim.value!r} unsupported")
             if claim.sentence and claim.sentence in safe:
-                safe = safe.replace(claim.sentence, _HONEST_ADMISSION).strip()
+                # Fix 7 — strip the unsupported sentence rather than inject the
+                # honest-admission placeholder mid-reply (artefact in dis_54,
+                # base_82/84, hall_82). Only fall back to the placeholder if
+                # stripping would empty the whole reply.
+                without = safe.replace(claim.sentence, "").strip()
+                without = re.sub(r"\s{2,}", " ", without)
+                without = re.sub(
+                    r"(?:^|\s)(?:and|but|so|also|,)\s*(?=[.!?]|$)",
+                    ".", without,
+                ).strip()
+                safe = without if without else _HONEST_ADMISSION
 
         if issues:
             _log.info("Auditor.pre_response: unsupported claims replaced", issues=issues)

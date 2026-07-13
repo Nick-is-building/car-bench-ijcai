@@ -771,6 +771,41 @@ class RelativeRuleTest(unittest.TestCase):
         self.assertEqual(out.calls, [])
 
 
+class Fix4RelativeOnUnknownTest(unittest.TestCase):
+    """Fix 4a — relative modification of a state field whose current reading is
+    'unknown' (removed_result_field, hall_40) has no derivable target and no
+    user-supplied answer either. Emit an honest admission, do not ask."""
+
+    def setUp(self):
+        self.eng = DisambiguationEngine()
+
+    def test_unknown_source_yields_honest_admission(self):
+        ctx = _ledger_ctx(FAN_SCHEMA,
+                          [("get_climate_settings", {"fan_speed": "unknown"})])
+        slot = {"tool": "set_fan_speed", "argument": "level",
+                "user_stated": False, "relative_change": "increase"}
+        ctx.intent = {"is_state_changing": True, "value_ambiguities": [slot]}
+        call = PlannedCall(tool="set_fan_speed", arguments={"level": 0}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertTrue(out.honest_admission)
+        self.assertEqual(out.calls, [])
+        self.assertEqual(out.question, "")
+        # message must not sound like a Rückfrage
+        self.assertIn("unavailable", out.honest_admission.lower())
+
+    def test_known_source_still_resolves_normally(self):
+        """Regression: known-numeric reading must still derive without emitting admission."""
+        ctx = _ledger_ctx(FAN_SCHEMA,
+                          [("get_climate_settings", {"fan_speed": 2})])
+        slot = {"tool": "set_fan_speed", "argument": "level",
+                "user_stated": False, "relative_change": "increase"}
+        ctx.intent = {"is_state_changing": True, "value_ambiguities": [slot]}
+        call = PlannedCall(tool="set_fan_speed", arguments={"level": 0}, call_id="c1")
+        out = self.eng.pre_flight(ctx, [call], extractor=lambda c, t, a: PreferenceSlot())
+        self.assertFalse(out.honest_admission)
+        self.assertEqual(out.calls[0].arguments["level"], 3)
+
+
 class BuildSlotQuestionTest(unittest.TestCase):
     """Fix 2: deterministic fallback question includes tool, argument, options."""
 

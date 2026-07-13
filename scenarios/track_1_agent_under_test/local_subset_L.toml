@@ -1,0 +1,76 @@
+# Subset L — Verifikation Fix-Paket L auf 38 Delta-Fails + 21 gezielte
+# Regressions-Tasks aus der ersten Hälfte (Fix 1 + Fix 2 exercise + alte
+# Passers pro Split) und wenige Delta-Passers.
+#
+# 59 Tasks × 3 Trials = 177 Runs. Kostenschätzung ~$21-26 (Delta-Referenz
+# $0.11/Trial + moderate Aufschläge durch neue Rebuttal-Runden).
+#
+# Regressions-Auswahl:
+# - Base erste Hälfte: 0, 2, 10, 16, 28 (F-fix/K-fix Passers — Fix 1/2 exercisen)
+# - Base Delta-Passer: 50, 62, 76 (Nav-Bezug für Fix 2)
+# - Hall erste Hälfte: 0, 18, 28, 30, 36 (F-fix Passers)
+# - Hall Delta-Passer: 54, 66 (Nav-nah)
+# - Dis erste Hälfte: 0, 16, 20, 28, 36, 38 (J-Passers, Fix 1/2 exercisen)
+# - Dis Delta-Passer: 50
+#
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/subset_L_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_subset_L.toml \
+#      > _local/runs/subset_L.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+# Base: 15 Delta-Fails + 8 Regressions (5 first-half, 3 Delta-Passers)
+tasks_base_task_id_filter = [
+    # Delta-Fails
+    "base_40", "base_44", "base_48", "base_54", "base_60",
+    "base_64", "base_70", "base_74", "base_80", "base_82",
+    "base_84", "base_86", "base_88", "base_96", "base_98",
+    # First-half regressions (F/G/K-Passers)
+    "base_0", "base_2", "base_10", "base_16", "base_28",
+    # Delta-passer regressions
+    "base_50", "base_62", "base_76"
+]
+
+# Hall: 13 Delta-Fails + 7 Regressions (5 first-half, 2 Delta-Passers)
+tasks_hallucination_task_id_filter = [
+    # Delta-Fails
+    "hallucination_40", "hallucination_44", "hallucination_48",
+    "hallucination_62", "hallucination_64", "hallucination_74",
+    "hallucination_76", "hallucination_78", "hallucination_80",
+    "hallucination_82", "hallucination_86", "hallucination_88",
+    "hallucination_90",
+    # First-half regressions
+    "hallucination_0", "hallucination_18", "hallucination_28",
+    "hallucination_30", "hallucination_36",
+    # Delta-passer regressions
+    "hallucination_54", "hallucination_66"
+]
+
+# Dis: 10 Delta-Fails + 7 Regressions (6 first-half J-Passers, 1 Delta-Passer)
+tasks_disambiguation_task_id_filter = [
+    # Delta-Fails
+    "disambiguation_40", "disambiguation_42", "disambiguation_44",
+    "disambiguation_46", "disambiguation_48", "disambiguation_51",
+    "disambiguation_52", "disambiguation_53", "disambiguation_54",
+    "disambiguation_55",
+    # First-half regressions (J-Passers exercise Fix 1/2)
+    "disambiguation_0", "disambiguation_16", "disambiguation_20",
+    "disambiguation_28", "disambiguation_36", "disambiguation_38",
+    # Delta-passer regression
+    "disambiguation_50"
+]

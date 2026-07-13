@@ -114,6 +114,45 @@ _INABILITY_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Fix 5 — Announce-Stall-Detektor. When the draft ends the turn with a promise
+# ("let me switch…", "I'll now check…") but no more tool calls will run this
+# turn, the promise is a stall: the user-sim reads it as HALLUCINATION_ERROR.
+# Deterministic strip of the promise sentences; the remaining reply reports
+# only what actually happened.
+_ACTION_PROMISE_PATTERNS = re.compile(
+    r"\b("
+    r"let me\b|"
+    r"now let me\b|"
+    r"i'?ll (?:now|go ahead|proceed|check|look|do|switch|set|open|close|turn|"
+    r"change|start|stop|adjust|activate|update|send|send it|make it happen)\b|"
+    r"i'?m (?:going to|about to)\b|"
+    r"i will now\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def strip_action_promises(draft: str) -> str:
+    """Fix 5 — remove sentences that promise an upcoming action.
+
+    Called only when no further tool calls follow this turn: any promise is a
+    stall then, not a legitimate look-ahead. If stripping would empty the reply,
+    return the original draft (something is better than nothing; C5/Auditor
+    catch the actual fabrication).
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", draft)
+    kept = [s for s in sentences if not _ACTION_PROMISE_PATTERNS.search(s)]
+    if len(kept) == len(sentences):
+        return draft
+    result = " ".join(s.strip() for s in kept if s.strip()).strip()
+    if not result:
+        return draft
+    _log.info(
+        "strip_action_promises: removed %d promise sentence(s)",
+        len(sentences) - len(kept),
+    )
+    return result
+
 
 def _successful_tool_names(ledger: Ledger) -> set[str]:
     """Tool names that have at least one SUCCESS result in the ledger."""
@@ -198,6 +237,65 @@ def _tool_entity_synonyms(tool_name: str) -> list[str]:
     return [p for p in parts if p not in _COMMON_VERBS and len(p) > 2]
 
 
+# Fix 1a — observation tools whose result values are legitimate provenance for
+# same-entity state-changing arguments (dis_40, base_40 T1: percentage=5 comes
+# from get_vehicle_window_positions of the same window). Mirrors
+# policies.OBSERVATION_TOOLS but kept local to avoid a cross-module import here.
+_OBSERVATION_TOOLS_FOR_PROVENANCE = frozenset({
+    "get_climate_settings",
+    "get_exterior_lights_status",
+    "get_vehicle_window_positions",
+    "get_sunroof_and_sunshade_position",
+    "get_current_navigation_state",
+    "get_temperature_inside_car",
+    "get_seat_heating",
+    "get_seat_occupancy",
+    "get_charging_specs_and_status",
+    "get_battery_status",
+    "get_user_preferences",
+})
+
+
+def _value_from_same_entity_observation(
+    value: float | int, tool_name: str, ledger: Ledger,
+) -> bool:
+    """Fix 1a — True if the numeric value appears in an observation-tool
+    result whose tool name shares an entity token with the state-changing
+    tool. Provenance is Lesson-1a valid: the LLM did not invent it, the
+    evaluator's own tool did. Skips the C3 attribution loop that misreads
+    'position=5' as unsound provenance for 'percentage=5'.
+    """
+    import json as _json
+
+    tool_entities = set(_tool_entity_synonyms(tool_name))
+    if not tool_entities:
+        return False
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return False
+    iv = int(fv) if fv.is_integer() else None
+    variants = {str(fv), f"{fv}"}
+    if iv is not None:
+        variants.add(str(iv))
+    for e in ledger.entries:
+        if e.kind != "tool_result" or not e.tool_name:
+            continue
+        if e.tool_name not in _OBSERVATION_TOOLS_FOR_PROVENANCE:
+            continue
+        obs_entities = set(_tool_entity_synonyms(e.tool_name))
+        if not (obs_entities & tool_entities):
+            continue
+        text = e.content if isinstance(e.content, str) else _json.dumps(e.content)
+        if not text:
+            continue
+        # match on numeric token boundaries so e.g. "5" doesn't match inside "50"
+        for v in variants:
+            if re.search(r"(?<!\d)" + re.escape(v) + r"(?!\d)", text):
+                return True
+    return False
+
+
 def _collect_unknown_fields(ledger: Ledger) -> dict[str, list[str]]:
     """Return {tool_name: [field_names]} for SUCCESS results containing 'unknown' values."""
     import json as _json
@@ -270,6 +368,182 @@ def inject_unknown_caveat(
     caveat = f"Note: the {labels} is currently unavailable."
     _log.info("inject_unknown_caveat: appending caveat", labels=labels)
     return draft.rstrip() + " " + caveat
+
+
+def _iter_route_metadata(ledger: Ledger):
+    """Fix 3 — yield every route dict recorded in the ledger (from
+    get_routes_from_start_to_destination results).
+
+    Each yielded dict has route_id, start_id, destination_id and other
+    per-alternative metadata. Read-only over successful tool results.
+    """
+    import json as _json
+
+    for e in ledger.entries:
+        if e.kind != "tool_result" or e.tool_name != "get_routes_from_start_to_destination":
+            continue
+        text = e.content if isinstance(e.content, str) else None
+        if text is None:
+            continue
+        try:
+            payload = _json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("status") != "SUCCESS":
+            continue
+        result = payload.get("result") or {}
+        routes = result.get("routes") if isinstance(result, dict) else None
+        if not isinstance(routes, list):
+            continue
+        for r in routes:
+            if isinstance(r, dict) and "route_id" in r:
+                yield r
+
+
+def _find_route(ledger: Ledger, route_id: str) -> dict | None:
+    """Return the metadata for `route_id`, or None if not seen in the ledger."""
+    if not route_id:
+        return None
+    for r in _iter_route_metadata(ledger):
+        if r.get("route_id") == route_id:
+            return r
+    return None
+
+
+def _pick_route_from(ledger: Ledger, start_id: str, dest_id: str | None = None,
+                     minimize: str = "duration_hours") -> str | None:
+    """Fix 3 — pick the objective-best route in the ledger starting at start_id
+    (and, if given, ending at dest_id). Objective = fastest by default, ties
+    broken by distance. Returns route_id or None if no candidate exists.
+    """
+    cands = [
+        r for r in _iter_route_metadata(ledger)
+        if r.get("start_id") == start_id
+        and (dest_id is None or r.get("destination_id") == dest_id)
+        and isinstance(r.get(minimize), (int, float))
+        and not isinstance(r.get(minimize), bool)
+    ]
+    if not cands:
+        return None
+    tie = "distance_km"
+
+    def _key(r):
+        secondary = r.get(tie) if tie else 0
+        return (r[minimize], secondary if isinstance(secondary, (int, float)) else 0)
+
+    return min(cands, key=_key).get("route_id")
+
+
+# Fix 3 — declarative table of navigation calls whose route_id arguments must
+# start at (or lead to) a specific waypoint. Table-driven (no branching on
+# tool names): a (tool, id_arg) either has a constraint or does not.
+#
+# Format: (tool, id_argument) -> ("start"|"end", waypoint_arg_or_field)
+#   "start" means the referenced route's start_id must equal the value in
+#   waypoint_arg; "end" means the route's destination_id must equal it.
+#   waypoint_arg is either an argument name on the same call ("new_waypoint_id")
+#   or the special token "@prev_last_waypoint" resolved from the ledger.
+_NAV_ROUTE_ID_CONSTRAINTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("navigation_replace_one_waypoint", "route_id_leading_away_from_previous_waypoint"):
+        ("start", "new_waypoint_id"),
+    ("navigation_replace_one_waypoint", "route_id_leading_to_new_waypoint"):
+        ("end", "new_waypoint_id"),
+    ("navigation_replace_final_destination", "route_id_leading_to_new_destination"):
+        ("end", "new_destination_id"),
+    ("navigation_add_one_waypoint", "route_id_leading_away_from_new_waypoint"):
+        ("start", "new_waypoint_id"),
+    ("navigation_add_one_waypoint", "route_id_leading_to_new_waypoint"):
+        ("end", "new_waypoint_id"),
+}
+
+
+@dataclass
+class NavArgumentCheck:
+    """Fix 3 — outcome of the navigation-argument validator."""
+    ok: bool
+    hints: list[str]                # human-readable re-plan hints per violation
+    repaired: dict                  # arguments after auto-repair (id ← ledger)
+    replaced: dict                  # {arg: (old, new)} for telemetry
+
+
+def check_navigation_arguments(tool_name: str, arguments: dict,
+                                ledger: Ledger) -> NavArgumentCheck:
+    """Fix 3 — verify each route_id argument has the correct start/end anchor.
+
+    Deterministic: reads route metadata from the ledger and, if the LLM picked
+    a route whose start_id/destination_id doesn't match the expected waypoint,
+    substitutes the objective-best (fastest) route that does. All substitutions
+    are surfaced as policy-notes hints so the planner can learn for the next
+    round; the repaired arguments make the call safe to execute right now.
+    """
+    hints: list[str] = []
+    replaced: dict[str, tuple] = {}
+    repaired = dict(arguments)
+
+    for arg_name in list(arguments.keys()):
+        constraint = _NAV_ROUTE_ID_CONSTRAINTS.get((tool_name, arg_name))
+        if constraint is None:
+            continue
+        side, wp_arg = constraint
+        wp_id = arguments.get(wp_arg)
+        if not isinstance(wp_id, str) or not wp_id:
+            continue
+        route_id = arguments.get(arg_name)
+        if not isinstance(route_id, str) or not route_id:
+            continue
+        meta = _find_route(ledger, route_id)
+        if meta is None:
+            # unseen route_id — inject a hint but don't guess a replacement
+            hints.append(
+                f"route_id {route_id!r} for {tool_name}.{arg_name} is not in any "
+                f"get_routes_from_start_to_destination result recorded in this "
+                f"conversation. Use a route_id from a route query in the ledger."
+            )
+            continue
+        anchor = "start_id" if side == "start" else "destination_id"
+        if meta.get(anchor) == wp_id:
+            continue
+        # anchor mismatch — pick the objective-best route in the ledger that
+        # DOES satisfy the anchor
+        if side == "start":
+            alt = _pick_route_from(ledger, wp_id)
+        else:
+            # end-anchored: iterate ledger routes with destination == wp_id
+            alt_cands = [
+                r for r in _iter_route_metadata(ledger)
+                if r.get("destination_id") == wp_id
+                and isinstance(r.get("duration_hours"), (int, float))
+                and not isinstance(r.get("duration_hours"), bool)
+            ]
+            alt = None
+            if alt_cands:
+                alt = min(
+                    alt_cands,
+                    key=lambda r: (r["duration_hours"],
+                                    r.get("distance_km") if isinstance(r.get("distance_km"), (int, float)) else 0),
+                ).get("route_id")
+        if alt is None:
+            hints.append(
+                f"{tool_name}.{arg_name}={route_id!r} does not {side} at "
+                f"{wp_id!r} (route {anchor}={meta.get(anchor)!r}), and no "
+                f"alternative route with the correct anchor is in the ledger yet."
+            )
+            continue
+        repaired[arg_name] = alt
+        replaced[arg_name] = (route_id, alt)
+        hints.append(
+            f"{tool_name}.{arg_name}: chosen route_id {route_id!r} does not "
+            f"{side} at {wp_id!r}; substituted the fastest ledger route with "
+            f"correct anchor: {alt!r}."
+        )
+        _log.info(
+            "NavArgumentValidator: repaired route_id anchor",
+            tool=tool_name, arg=arg_name, old=route_id, new=alt,
+            anchor=anchor, waypoint=wp_id,
+        )
+    return NavArgumentCheck(
+        ok=not hints, hints=hints, repaired=repaired, replaced=replaced,
+    )
 
 
 def _ledger_text_corpus(ledger: Ledger) -> str:
@@ -376,13 +650,28 @@ class FabricationGuard:
                     reason=f"{tool_name}.{name}={value} has no ledger provenance",
                 )
 
-        # C3: LLM-assisted binding check
-        result1 = self._attribution_check(tool_name, numeric_args, ledger, corpus, model)
+        # Fix 1a — Values that came from a same-entity observation call are
+        # legitimately provenant (dis_40 percentage=5 from
+        # get_vehicle_window_positions of the same window). Skip C3 for those:
+        # the LLM attribution loop otherwise misreads "position=5" as a
+        # competing binding and forces a spurious clarify question.
+        c3_args = {
+            k: v for k, v in numeric_args.items()
+            if not _value_from_same_entity_observation(v, tool_name, ledger)
+        }
+        if not c3_args:
+            return GuardResult(
+                verdict="PASS", layer="FabricationGuard.C2",
+                reason="all numeric args backed by same-entity observations",
+            )
+
+        # C3: LLM-assisted binding check on the remaining args
+        result1 = self._attribution_check(tool_name, c3_args, ledger, corpus, model)
         if result1.verdict == "PASS":
             return result1
 
         # C4: unanimity gate — second identical call
-        result2 = self._attribution_check(tool_name, numeric_args, ledger, corpus, model)
+        result2 = self._attribution_check(tool_name, c3_args, ledger, corpus, model)
         if result1.verdict == result2.verdict:
             # unanimous agreement → follow
             return GuardResult(
@@ -492,7 +781,8 @@ class FabricationGuard:
     # --- C5: draft sanitization ---
 
     def sanitize(self, draft: str, ledger: Ledger, model: str | None = None,
-                 policy_notes: list[str] | tuple[str, ...] = ()) -> str:
+                 policy_notes: list[str] | tuple[str, ...] = (),
+                 catalog_tools: set[str] | None = None) -> str:
         """
         C5: remove or replace unsupported factual claims in draft.
         Mandatory route-choice mention added if missing (OI-012 partial).
@@ -555,31 +845,51 @@ class FabricationGuard:
                 continue
 
             _log.info(
-                "FabricationGuard.C5: unsupported claim replaced",
+                "FabricationGuard.C5: unsupported claim removed",
                 claim_value=claim.value,
                 sentence=claim.sentence[:80],
             )
-            safe = safe.replace(
-                claim.sentence,
-                "I'm sorry, I don't have confirmed information about that.",
-            ).strip()
+            # Fix 7 — remove the sentence instead of injecting the placeholder
+            # "I'm sorry, I don't have confirmed information about that." mid-reply.
+            # The placeholder was landing as an artefact inside otherwise good
+            # answers (dis_54, base_82, base_84, base_98, hall_82). Fall back to
+            # the placeholder ONLY if stripping would empty the whole reply.
+            without = safe.replace(claim.sentence, "").strip()
+            # collapse stray double spaces/orphan connectors created by the strip
+            without = re.sub(r"\s{2,}", " ", without)
+            without = re.sub(r"(?:^|\s)(?:and|but|so|also|,)\s*(?=[.!?]|$)",
+                             ".", without).strip()
+            if without:
+                safe = without
+            else:
+                safe = "I'm sorry, I don't have confirmed information about that."
 
-        safe = self._fix_inability_contradictions(safe, ledger)
+        safe = self._fix_inability_contradictions(safe, ledger, catalog=catalog_tools)
 
         return self._add_route_mention_if_missing(safe, ledger)
 
     @staticmethod
-    def _fix_inability_contradictions(draft: str, ledger: Ledger) -> str:
-        """Replace false inability claims that contradict successful tool calls."""
+    def _fix_inability_contradictions(draft: str, ledger: Ledger,
+                                       catalog: set[str] | None = None) -> str:
+        """Replace false inability claims that contradict either successful
+        tool calls OR available catalog tools (Fix 1e).
+
+        Fix 1e: catalog-based check catches base_60 T0 / hall_90 T1 — the
+        agent claims "aren't available to me right now" for tools the
+        evaluator has just presented as available. Read-only against the
+        provided catalog set; catalog=None keeps the original successful-only
+        behavior for callers that don't pass one.
+        """
         successful = _successful_tool_names(ledger)
-        if not successful:
+        available = (successful | (catalog or set()))
+        if not available:
             return draft
         fixed = draft
         for sentence in re.split(r"(?<=[.!?])\s+", draft):
-            tool = _inability_contradicts_ledger(sentence, successful)
+            tool = _inability_contradicts_ledger(sentence, available)
             if tool is not None:
                 _log.info(
-                    "FabricationGuard.C6: inability claim contradicts successful tool",
+                    "FabricationGuard.C6: inability claim contradicts available tool",
                     tool=tool,
                     sentence=sentence[:80],
                 )

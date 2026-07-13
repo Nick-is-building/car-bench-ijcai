@@ -21,6 +21,8 @@ from track_1_agent_under_test.glassbox.guard import (
     _successful_tool_names,
     _is_relative_distance_claim,
     _route_data_is_unknown,
+    strip_action_promises,
+    check_navigation_arguments,
 )
 
 
@@ -195,6 +197,123 @@ class RelativeDistanceClaimTest(unittest.TestCase):
             result = guard.sanitize(draft, led)
 
         self.assertIn("350 km", result)
+
+
+class Fix3NavArgumentValidatorTest(unittest.TestCase):
+    """Fix 3 — navigation route_id arguments must point at the correct
+    waypoint anchor (hall_48/64, hall_80). Deterministic re-anchor from the
+    ledger's route metadata."""
+
+    def _ledger_with_routes(self, routes: list[dict]) -> Ledger:
+        led = Ledger()
+        led.add_user_turn("plan route")
+        led.add_tool_call("get_routes_from_start_to_destination", {}, "c1")
+        led.add_tool_result(
+            "get_routes_from_start_to_destination",
+            json.dumps({"status": "SUCCESS", "result": {"routes": routes}}),
+            "c1",
+        )
+        return led
+
+    def test_replace_waypoint_start_id_mismatch_repaired(self):
+        led = self._ledger_with_routes([
+            {"route_id": "r_bad", "start_id": "loc_A", "destination_id": "loc_C",
+             "duration_hours": 3, "distance_km": 200},
+            {"route_id": "r_good", "start_id": "loc_B", "destination_id": "loc_C",
+             "duration_hours": 2, "distance_km": 150},
+            {"route_id": "r_alt", "start_id": "loc_B", "destination_id": "loc_C",
+             "duration_hours": 4, "distance_km": 300},
+        ])
+        args = {
+            "new_waypoint_id": "loc_B",
+            "route_id_leading_away_from_previous_waypoint": "r_bad",
+        }
+        res = check_navigation_arguments(
+            "navigation_replace_one_waypoint", args, led)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.repaired["route_id_leading_away_from_previous_waypoint"], "r_good")
+        self.assertIn("route_id_leading_away_from_previous_waypoint", res.replaced)
+
+    def test_replace_final_destination_end_id_mismatch_repaired(self):
+        led = self._ledger_with_routes([
+            {"route_id": "r_bad", "start_id": "loc_A", "destination_id": "loc_X",
+             "duration_hours": 3, "distance_km": 200},
+            {"route_id": "r_good", "start_id": "loc_A", "destination_id": "loc_MUC",
+             "duration_hours": 5, "distance_km": 400},
+        ])
+        args = {
+            "new_destination_id": "loc_MUC",
+            "route_id_leading_to_new_destination": "r_bad",
+        }
+        res = check_navigation_arguments(
+            "navigation_replace_final_destination", args, led)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.repaired["route_id_leading_to_new_destination"], "r_good")
+
+    def test_correct_route_id_passes_untouched(self):
+        led = self._ledger_with_routes([
+            {"route_id": "r_ok", "start_id": "loc_B", "destination_id": "loc_C",
+             "duration_hours": 2, "distance_km": 150},
+        ])
+        args = {"new_waypoint_id": "loc_B",
+                "route_id_leading_away_from_previous_waypoint": "r_ok"}
+        res = check_navigation_arguments(
+            "navigation_replace_one_waypoint", args, led)
+        self.assertTrue(res.ok)
+        self.assertEqual(res.replaced, {})
+
+    def test_unknown_route_id_emits_hint_no_repair(self):
+        """Route id not in the ledger — surface a hint, do not guess a replacement."""
+        led = self._ledger_with_routes([])
+        args = {"new_waypoint_id": "loc_B",
+                "route_id_leading_away_from_previous_waypoint": "r_never_seen"}
+        res = check_navigation_arguments(
+            "navigation_replace_one_waypoint", args, led)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.replaced, {})
+        self.assertTrue(any("r_never_seen" in h for h in res.hints))
+
+    def test_non_navigation_tool_ignored(self):
+        led = Ledger()
+        args = {"level": 3}
+        res = check_navigation_arguments("set_fan_speed", args, led)
+        self.assertTrue(res.ok)
+        self.assertEqual(res.replaced, {})
+
+
+class Fix5AnnounceStallTest(unittest.TestCase):
+    """Fix 5 — an action promise sentence at turn end is a HALLUCINATION_ERROR
+    trigger (hall_44 T1, hall_76, hall_82, hall_86, dis_54). Strip it."""
+
+    def test_strip_let_me_promise(self):
+        draft = "The window is at 50%. Let me switch it off for you."
+        result = strip_action_promises(draft)
+        self.assertEqual(result, "The window is at 50%.")
+
+    def test_strip_i_will_promise(self):
+        draft = "Route calculated. I'll now check the weather for you."
+        result = strip_action_promises(draft)
+        self.assertEqual(result, "Route calculated.")
+
+    def test_strip_now_let_me(self):
+        draft = "That's set. Now let me adjust the fan speed."
+        result = strip_action_promises(draft)
+        self.assertEqual(result, "That's set.")
+
+    def test_no_promise_left_untouched(self):
+        draft = "Done. The seat heater is now at level 3."
+        self.assertEqual(strip_action_promises(draft), draft)
+
+    def test_only_promise_returns_original_fallback(self):
+        """If stripping would empty the reply, keep the draft — something is
+        better than nothing (Auditor/C5 catch the actual fabrication)."""
+        draft = "Let me do that now."
+        self.assertEqual(strip_action_promises(draft), draft)
+
+    def test_past_action_not_flagged(self):
+        """Reporting what has been done is not a promise — never strip."""
+        draft = "I've opened the sunroof to 50%."
+        self.assertEqual(strip_action_promises(draft), draft)
 
 
 if __name__ == "__main__":

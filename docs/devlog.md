@@ -2953,3 +2953,94 @@ Policy-Interpretation) und steering_wheel_heating wird nicht mehr fälschlich al
 - Dis: 12/20 → 13/20 (+dis_38)  · dis_20 T1, dis_32 T1 LLM-Stochastik
 - Overall K1-Set: 17/30 → **20/30 (66.7%)** — Steigerung von 56.7% auf 66.7% durch
   Auftrag K.
+
+---
+
+## Auftrag L — Fix-Paket L (Hypothese, VOR dem Subset-Lauf)
+
+**Anlass:** Generalprobe Delta 2026-07-13 zeigte 45% Overall (Base 50%, Hall 53.6%,
+Dis 9%). Tiefen-Analyse der 38 Fail-Trials ergab 8 Klassen (A–H), von denen 7
+deterministisch bzw. per Prompt-Ergänzung adressierbar sind. Compliance-Grenze
+gewahrt: keine Evaluator-Subscores nachgebildet, kein Task-Antwort-Hardcoding.
+
+**Implementierte Fixes (12 Dateien, +996 Zeilen, Suite 304 grün, keine Regression):**
+
+1. **Fix 3 — Navigation-Argument-Validator** (`guard.py: check_navigation_arguments`,
+   `state_machine.py: nav-loop`). Deterministische Prüfung von `route_id_*_from/to_waypoint`-
+   Argumenten gegen Ledger-Route-Metadaten. Bei Anchor-Mismatch objektiv-beste (fastest)
+   Route im Ledger substituieren + Hint. Erklärt hall_48/64 T2/80 (0/3 → erwartet 2-3/3):
+   Evaluator-FAILURE "start of route does not match waypoint" wird deterministisch
+   verhindert; Rebuttal-Bound = 2.
+
+2. **Fix 4a — Relative-on-Unknown → honest admission** (`disambiguation.py: _apply_relative`
+   + `_UNKNOWN_SOURCE` sentinel, `pre_flight`, `state_machine.py`). Wenn INTAKE einen
+   `relative_change` flaggt UND die source-tool-Result den `current_field` als
+   `"unknown"` liefert, ist keine Zielwert-Ableitung möglich. Statt Slot-Frage
+   (führt zu OUT_OF_SCOPE) sofort ehrliche Absage. Erklärt hall_40 (0/3 → erwartet
+   ≥2/3, ASSISTANT_ACKNOWLEDGED_REMOVED_PART).
+
+3. **Fix 5 — Announce-Stall-Detektor** (`guard.py: strip_action_promises`,
+   `state_machine.py: _verify_and_respond`). Regex-Musterliste ("let me", "I'll now",
+   "now let me" + Aktions-Verb) im Draft. Wenn Turn ohne weitere Tool-Calls endet und
+   Draft enthält Aktions-Versprechen: sentence-strip. Erklärt hall_44 T1, hall_76 0/3,
+   hall_82/86 partiell, dis_54.
+
+4. **Fix 7 — C5-Sanitizer entschärfen** (`guard.py: sanitize`, `auditor.py:
+   pre_response_check`). Unsupported claim-sentence wird entfernt (nicht durch
+   Placeholder "I'm sorry, I don't have confirmed information about that." ersetzt).
+   Placeholder nur noch als Fallback wenn Strip Reply leert. Erklärt dis_54, base_82/84,
+   hall_82 (2× Placeholder-Artefakt mitten in guten Antworten).
+
+5. **Fix 1a — Provenance-Skip C3** (`guard.py: _value_from_same_entity_observation`,
+   `check_tool_arguments`). Numerische Args, deren Wert aus einer Observation-Tool-
+   Result (get_climate_settings, get_vehicle_window_positions, ...) mit gemeinsamem
+   Entity-Token stammt, überspringen die LLM-Attribution (C3). Erklärt dis_40, base_54,
+   base_40 T1, hall_74 T2: percentage/level aus get_*-Result wird nicht mehr fälschlich
+   als "unbound" geblockt.
+
+6. **Fix 1b — Frage-Format** (`state_machine.py: _humanize_slot`). Slot-Notation wie
+   `'open_close_window.percentage=5:'` wird zu speakable form ("percentage") reduziert.
+   Regex-basiert, deterministisch. Löst die interne-Notation-in-User-Text-Leaks.
+
+7. **Fix 1e — Incapability-Text-Scan gegen Katalog** (`guard.py:
+   _fix_inability_contradictions`, catalog-Parameter durchgereicht). C6 flaggt jetzt
+   auch "I'm not able to X"-Sätze wenn X-Tool im Runtime-Katalog steht (nicht nur bei
+   bereits ausgeführten Tools). Erklärt base_60 T0 / hall_90 T1 nach User-Bestätigung.
+
+8. **Fix 2 — Route-Choice-Presentation** (`policies.py: RequiresConfirmationRule
+   LLM-POL:022-single` für set_new_navigation single-stop, replace_final_destination,
+   replace_one_waypoint). Feuert nur wenn Ledger ≥2 Alternativen für die referenzierte
+   Route trägt UND User weder "fastest/shortest/Nth" gewählt hat noch nach Präsentation
+   affirmiert hat. Erklärt base_82, dis_46, dis_52.
+
+9. **Fix 6 — required-params-Check + ETA-Prompt** (`capability.py: missing_required`,
+   `state_machine.py: required-params loop`, `prompts/common.py`). Deterministisch:
+   fehlt ein schema-required Argument → Rebuttal-Note statt FAILURE-Call. Erklärt
+   base_96 T0 (get_weather ohne time_hour_24hformat). Prompt-Note ARRIVAL-CONDITION
+   zwingt Route→ETA→Weather-Reihenfolge bei destination-conditional Requests
+   (dis_53/base_96/dis_54).
+
+10. **Fix 8 — Plan-only prompt note** (`prompts/common.py`). Prompt-Ergänzung PLAN-ONLY
+    verhindert proaktive set_new_navigation bei "plan/compare/explore"-Requests.
+
+**Subset-Lauf-Plan (`local_subset_L.toml`):**
+- 38 Delta-Fails + 21 gezielte Regressions (16 first-half Passers pro Split
+  exercisieren Fix 1/2, 5 Delta-Passers mit Nav-Bezug) = 59 Tasks × 3 Trials
+  = 177 Runs.
+- Cost-Gate: ~$21-26 (Delta-Referenz $0.11/Trial + Rebuttal-Overhead durch neue
+  Guards). User-Freigabe (20-25€ + leichter Aufschlag) vorliegend.
+- Agent claude-sonnet-4-6, Judge/User-Sim gemini-2.5-flash, seed=10, max_steps=50.
+
+**Erwartete Auswirkungen (konservativ):**
+- Base: 15 Delta-Fails → ~10-12 neue Passers (Fix 2 base_82; Fix 1a base_40/54;
+  Fix 1b/e base_60/98; Fix 6 base_96; Fix 5 wenige).
+- Hall: 13 Delta-Fails → ~9-11 neue Passers (Fix 4a hall_40; Fix 3 hall_48/64/80;
+  Fix 5 hall_44/76/82/86/88; Fix 1e hall_90).
+- Dis: 10 Delta-Fails → ~6-8 neue Passers (Fix 2 dis_46/52; Fix 6 dis_53/54/55;
+  Fix 1a dis_40; Fix 7 dis_54).
+
+Realistisches Gesamtziel Subset L: 38 Fails → ~26-31 neue Passers (~74%). Alle 21
+Regressions bleiben grün. Extrapoliert auf zweite Hälfte: Overall ~76-81%.
+
+**Nach dem Subset:** Analyse, ggf. kompakte Nachfixrunde für Restfails; danach
+finaler offizieller Voll-Lauf für die Wertung — keine weiteren Test-Runs.

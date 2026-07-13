@@ -968,5 +968,99 @@ class ConfirmationTemplateParamsTest(unittest.TestCase):
         self.assertIn("Hello", q)
 
 
+class Fix2RoutePresentationTest(unittest.TestCase):
+    """Fix 2 — single-stop set/replace nav with ≥2 route alternatives in the
+    ledger and no user pick blocks proactively; presenting question defers the
+    set-call to the next turn (base_82, dis_46, dis_52)."""
+
+    def _ledger_with_alternatives(self, n_alt: int, user_text: str = "Get me to Berlin.",
+                                    replies: list[str] | None = None,
+                                    nav_active: bool = False) -> Ledger:
+        ledger = make_ledger()
+        ledger._entries[-1].content = user_text
+        # navigation-state observation so AUT-POL:018 does not defer set_new_navigation
+        observe(ledger, "get_current_navigation_state",
+                 {"navigation_active": nav_active, "waypoints_id": []})
+        routes = []
+        for i in range(n_alt):
+            routes.append({
+                "route_id": f"rll_{i}",
+                "start_id": "loc_A",
+                "destination_id": "loc_B",
+                "name_via": f"road_{i}",
+                "distance_km": 100 + i,
+                "duration_hours": 2,
+                "duration_minutes": i * 5,
+                "includes_toll": False,
+                "alias": ["fastest"] if i == 0 else ["first"],
+            })
+        observe(ledger, "get_routes_from_start_to_destination", {"routes": routes})
+        if replies:
+            for i, reply in enumerate(replies):
+                # add assistant then user pair to simulate multi-turn dialogue
+                ledger.add_agent_response(f"[assistant turn {i}]")
+                ledger.add_user_turn(reply)
+        return ledger
+
+    def test_multi_alt_no_pick_blocks_set(self):
+        ledger = self._ledger_with_alternatives(3)
+        c = call("set_new_navigation", {"route_ids": ["rll_0"]})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertTrue(pf.confirmations)
+        self.assertIn("LLM-POL:022-single", pf.confirmations[0].policy_id)
+        # call is held back
+        self.assertEqual(pf.kept, [])
+
+    def test_single_alt_passes_through(self):
+        ledger = self._ledger_with_alternatives(1)
+        c = call("set_new_navigation", {"route_ids": ["rll_0"]})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual(pf.confirmations, [])
+        self.assertEqual(len(pf.kept), 1)
+
+    def test_user_asked_fastest_passes_through(self):
+        ledger = self._ledger_with_alternatives(3, user_text="Get me to Berlin, fastest please.")
+        c = call("set_new_navigation", {"route_ids": ["rll_0"]})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual(pf.confirmations, [])
+
+    def test_multi_stop_route_ids_not_gated(self):
+        """Multi-stop (route_ids has ≥2 legs) stays on LLM-POL:022 note, not
+        the confirmation gate — no artificial rückfrage for multi-stops."""
+        ledger = self._ledger_with_alternatives(3)
+        c = call("set_new_navigation", {"route_ids": ["rll_0", "rll_1"]})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual(pf.confirmations, [])
+
+    def test_replace_final_destination_gated(self):
+        # replace-final-destination requires an active navigation (AUT-POL:017)
+        ledger = self._ledger_with_alternatives(3, nav_active=True)
+        c = call("navigation_replace_final_destination",
+                  {"new_destination_id": "loc_B",
+                   "route_id_leading_to_new_destination": "rll_0"})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertTrue(pf.confirmations)
+
+    def test_post_presentation_yes_confirms(self):
+        """After the assistant presented alternatives, a plain 'yes' on the
+        next user turn counts as a route pick (base_82 T2)."""
+        ledger = self._ledger_with_alternatives(
+            3,
+            user_text="Set me up for Berlin.",
+            replies=["Yes, let's go with the second one."],
+        )
+        # inject an agent turn that presented alternatives so the assistant-turn
+        # signal is present in the ledger. make_ledger did not add one.
+        # our helper appends an assistant turn just before the reply — but
+        # its content doesn't mention "alternative". Patch it:
+        for e in ledger._entries:
+            if e.kind == "agent":
+                e.content = "You have 3 more alternative routes."
+                break
+        c = call("set_new_navigation", {"route_ids": ["rll_0"]})
+        pf = pre_flight([c], ledger, _RC_INDEX)
+        self.assertEqual(pf.confirmations, [])
+
+
 if __name__ == "__main__":
     unittest.main()

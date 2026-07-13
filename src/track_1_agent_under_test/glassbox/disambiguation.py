@@ -139,6 +139,17 @@ class PreFlightDisambiguation:
     inject_preferences: dict | None = None             # get_user_preferences args, or None
     question: str = ""                                  # non-empty → BLOCK + Rückfrage
     resolved: list = field(default_factory=list)        # (tool, arg, value) telemetry
+    # Fix 4a — honest admission when the value cannot be resolved by design
+    # (e.g. a relative modification on a state field that reads "unknown").
+    # The user has no way to supply the target either, so asking would only
+    # yield OUT_OF_SCOPE. Signal the state machine to end the turn honestly.
+    honest_admission: str = ""
+
+
+# Fix 4a — sentinel returned by _apply_relative when the source-tool reading is
+# structurally unavailable (value = "unknown"). Distinguishes "cannot resolve"
+# (ask user) from "resolution impossible" (acknowledge and stop).
+_UNKNOWN_SOURCE = object()
 
 
 def _coerce(value: str, sample: object) -> object:
@@ -323,6 +334,21 @@ class DisambiguationEngine:
                 # fastest-route / relative-step slot resolves silently instead of
                 # falling through to a spurious clarification question.
                 derived = self._derive_slot_value(ctx, call, slot, index)
+                if derived is _UNKNOWN_SOURCE:
+                    # Fix 4a — source reading is "unknown"; asking is pointless.
+                    field_label = arg.replace("_", " ")
+                    action = call.tool.replace("_", " ")
+                    admission = (
+                        f"I can't {action} by a relative amount right now — the "
+                        f"current {field_label} reading is unavailable, so I "
+                        f"have no baseline to adjust from. If you can give me "
+                        f"the exact target value you want, I can set it directly."
+                    )
+                    _log.info(
+                        "Disambiguation: relative on unknown source → honest admission",
+                        tool=call.tool, argument=arg,
+                    )
+                    return PreFlightDisambiguation(calls=[], honest_admission=admission)
                 if derived is not None:
                     if index.has_tool(call.tool) and not index.has_parameter(call.tool, arg):
                         _log.info(
@@ -465,6 +491,13 @@ class DisambiguationEngine:
         if not isinstance(result, dict):
             return None
         current = result.get(rule.current_field)
+        # Fix 4a — if the source-tool reading is structurally unavailable
+        # ("unknown" is the evaluator's removed-result-field marker, hall_40),
+        # neither code nor user can supply the target for a relative change.
+        # Return the sentinel so the caller can emit an honest admission
+        # instead of a dead-end clarify loop.
+        if current == "unknown":
+            return _UNKNOWN_SOURCE
         if not isinstance(current, (int, float)) or isinstance(current, bool):
             return None
         # User-stated magnitude ("by two levels") from INTAKE; default one step.

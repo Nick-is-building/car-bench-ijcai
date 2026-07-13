@@ -82,7 +82,8 @@ def _plan(window, percentage=None):
 def _ctx():
     ledger = Ledger()
     ledger.add_system("You are a car assistant.")
-    ledger.add_user_turn("Open all the windows halfway, please.")
+    # "50" appears literally so FabricationGuard C2 has ledger provenance
+    ledger.add_user_turn("Open all the windows to 50 percent, please.")
     return ledger, TurnContext(ledger=ledger, tools=TOOLS, model="fake")
 
 
@@ -199,8 +200,10 @@ class EnumGateWiringTest(unittest.TestCase):
         self.assertTrue(any("INVALID-ARGUMENT" in n for n in ctx.policy_notes))
 
     def test_valid_enum_passes_null_fp(self):
+        # Fix 6: schema requires ("window", "percentage") — both need to be
+        # supplied so the required-params guard does not force a re-plan.
         ledger, ctx = _ctx()
-        fake = FakeLLM(intents=[_intent()], plans=[_plan("ALL")])
+        fake = FakeLLM(intents=[_intent()], plans=[_plan("ALL", percentage=50)])
         machine = StateMachine()
         with patch.object(glassbox_llm, "call_structured", fake):
             action = machine.run_turn(ctx)

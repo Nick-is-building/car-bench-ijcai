@@ -22,6 +22,7 @@ Idempotenz: deterministische call_ids (turn/runde/index), und ein identischer
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -138,6 +139,12 @@ class TurnContext:
     # I1: value-flow re-plan attempts after disambiguation resolved a value
     # but the planner substituted a different one (bounded to 2)
     value_flow_rebuttals: int = 0
+    # Fix 3: navigation-argument (route_id) re-plan attempts, bounded to 2
+    nav_arg_rebuttals: int = 0
+    # Fix 6: required-params re-plan attempts (bounded to 2), so a call with a
+    # missing schema-required argument is corrected before it turns into a
+    # FAILURE that kills r_tool_execution (base_96, hall_90 get_weather).
+    required_param_rebuttals: int = 0
 
     def transition(self, state: State) -> None:
         self.current_state = state
@@ -505,6 +512,15 @@ class StateMachine:
                     return action
                 # already fetched (defensive) — fall through to re-plan
                 continue
+            if dis.honest_admission:
+                # Fix 4a — relative modification on an "unknown" state field:
+                # no target is derivable and asking the user is pointless
+                # (hall_40). End the turn honestly.
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="Disambiguation.honest_admission",
+                    reason="relative modification on unknown source",
+                ))
+                return self._finish(ctx, dis.honest_admission)
             if dis.question:
                 ctx.layer_decisions.append(GuardResult(
                     verdict="BLOCK", layer="Disambiguation.clarify",
@@ -580,6 +596,76 @@ class StateMachine:
                     violations=brief,
                 )
                 return self._respond_invalid_argument(ctx, enum_violations)
+
+            # Fix 6 — required-parameters check against the tool schema.
+            # A missing schema-required argument becomes an evaluator FAILURE
+            # (base_96 T0: get_weather without time_hour_24hformat), which
+            # kills r_tool_execution for the whole trial. Bounded re-plan
+            # with a specific note; unrepaired after 2 rounds continues to
+            # the FabricationGuard path.
+            missing_req: list[tuple[str, list[str]]] = []
+            for call in calls:
+                miss = matcher.index.missing_required(call.tool, call.arguments)
+                if miss:
+                    missing_req.append((call.tool, miss))
+            if missing_req and ctx.required_param_rebuttals < 2:
+                ctx.required_param_rebuttals += 1
+                for tool, miss in missing_req:
+                    ctx.policy_notes.append(
+                        f"MISSING-REQUIRED: {tool} requires {', '.join(miss)!s}. "
+                        f"Do not call it without those arguments — the evaluator "
+                        f"will reject the call and the whole trial reward will "
+                        f"drop to 0. Read the tool schema and supply them."
+                    )
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="UNCERTAIN", layer="RequiredParams.replan",
+                    reason=f"missing required args → re-plan #{ctx.required_param_rebuttals}: {missing_req}",
+                ))
+                _log.info(
+                    "Required-params guard: re-plan with hints",
+                    missing=missing_req, rebuttal=ctx.required_param_rebuttals,
+                )
+                continue
+
+            # Fix 3 — Navigation-Argument-Validator. Deterministically verifies
+            # that each route_id argument's start/end anchor matches the
+            # designated waypoint (hall_48/64/80: route_id_leading_away must
+            # START at new_waypoint_id, etc.). On mismatch, substitute the
+            # fastest ledger route with the correct anchor OR re-plan with a
+            # note. Read-only over the ledger, table-driven.
+            from .guard import check_navigation_arguments
+            nav_hints: list[str] = []
+            for call in calls:
+                nav_res = check_navigation_arguments(call.tool, call.arguments, ctx.ledger)
+                if nav_res.ok:
+                    continue
+                if nav_res.replaced:
+                    for arg_name, (_, new) in nav_res.replaced.items():
+                        call.arguments[arg_name] = new
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="PASS", layer="NavArgumentValidator.repair",
+                        reason=f"repaired {list(nav_res.replaced.keys())} in {call.tool}",
+                    ))
+                nav_hints.extend(nav_res.hints)
+            if nav_hints:
+                still_unrepaired = any(
+                    not check_navigation_arguments(c.tool, c.arguments, ctx.ledger).ok
+                    for c in calls
+                )
+                if still_unrepaired and ctx.nav_arg_rebuttals < 2:
+                    ctx.nav_arg_rebuttals += 1
+                    for h in nav_hints:
+                        if h not in ctx.policy_notes:
+                            ctx.policy_notes.append(h)
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="UNCERTAIN", layer="NavArgumentValidator.replan",
+                        reason=f"unrepaired route_id anchor(s) → re-plan #{ctx.nav_arg_rebuttals}",
+                    ))
+                    _log.info(
+                        "NavArgumentValidator: re-plan with hints",
+                        hints=nav_hints, rebuttal=ctx.nav_arg_rebuttals,
+                    )
+                    continue
 
             # Stufe 5 (C2/C3/C4): argument provenance check before emitting calls.
             # State-changing calls with numeric args must have ledger-verified bindings.
@@ -681,7 +767,10 @@ class StateMachine:
     # --- terminal paths ---
 
     def _verify_and_respond(self, ctx: TurnContext) -> Action:
-        from .guard import FabricationGuard, GuardResult, inject_unknown_caveat
+        from .guard import (
+            FabricationGuard, GuardResult, inject_unknown_caveat,
+            strip_action_promises,
+        )
         from .auditor import Auditor
         from . import prompts
 
@@ -699,8 +788,13 @@ class StateMachine:
         ))
 
         fg = FabricationGuard()
+        # Fix 1e — pass the runtime tool catalog so the sanitizer can flag
+        # false-inability sentences about tools that are actually available.
+        from .capability import CapabilityIndex
+        catalog_tools = set(CapabilityIndex(ctx.tools).tool_names)
         safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model,
-                           policy_notes=ctx.policy_notes)
+                           policy_notes=ctx.policy_notes,
+                           catalog_tools=catalog_tools)
         ctx.layer_decisions.append(GuardResult(
             verdict="BLOCK" if safe != audit.safe_text else "PASS",
             layer="FabricationGuard.C5",
@@ -709,29 +803,56 @@ class StateMachine:
 
         safe = inject_unknown_caveat(safe, ctx.ledger, ctx.executed_signatures)
 
+        # Fix 5 — Announce-Stall-Detektor: if the turn ends here (no more tool
+        # calls will follow) and the draft still contains action promises
+        # ("let me...", "I'll now..."), those promises become HALLUCINATION_ERROR
+        # in the user-sim (hall_44 T1, hall_76 0/3, hall_82, hall_86, dis_54).
+        # Strip the promise sentences deterministically — what actually happened
+        # remains, what was promised without execution is removed.
+        before = safe
+        safe = strip_action_promises(safe)
+        if safe != before:
+            ctx.layer_decisions.append(GuardResult(
+                verdict="BLOCK", layer="AnnounceStall.strip",
+                reason="removed action-promise sentence(s) at turn end",
+            ))
+
         ctx.transition(State.RESPOND)
         final = prompts.respond.finalize(safe, ctx)
         return self._finish(ctx, final)
+
+    @staticmethod
+    def _humanize_slot(argument: str) -> str:
+        """Fix 1b — turn schema slot names ('percentage', 'seat_zone',
+        'time_hour_24hformat') into speakable phrases without leaking the
+        internal 'tool.arg=val:' notation into the user text.
+        """
+        if not argument:
+            return ""
+        cleaned = re.sub(r"[=:].*$", "", argument.strip())
+        cleaned = re.sub(r"['\"]", "", cleaned)
+        cleaned = re.sub(r"[_.]", " ", cleaned).strip()
+        return cleaned
 
     def _respond_fabrication_block(self, ctx: TurnContext, result: "GuardResult",
                                     call: PlannedCall | None = None) -> Action:
         ctx.transition(State.RESPOND)
         tool = call.tool if call else ""
         action = tool.replace("_", " ") if tool else "that"
-        argument = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        raw_arg = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        argument = self._humanize_slot(raw_arg)
         if tool:
             text = (
-                f"I'm not certain which value you'd like me to use for "
-                f"'{argument}' when I {action}. Could you state it explicitly?"
+                f"I still need one more detail to {action} — the exact "
+                f"{argument} you'd like. Could you tell me?"
                 if argument else
-                f"I'm sorry, I can't proceed with {action} — I don't have a "
-                f"confirmed value to use. Could you clarify the exact value "
-                f"you'd like me to set?"
+                f"I still need one more detail to {action} — could you "
+                f"tell me the exact value you'd like me to set?"
             )
         else:
             text = (
-                "I'm sorry, I can't proceed — I don't have a confirmed value "
-                "to use. Could you clarify the exact value you'd like me to set?"
+                "I still need one more detail before I can do that — "
+                "could you tell me the exact value you'd like me to set?"
             )
         return self._finish(ctx, text)
 
@@ -740,19 +861,20 @@ class StateMachine:
         ctx.transition(State.RESPOND)
         tool = call.tool if call else ""
         action = tool.replace("_", " ") if tool else "that"
-        argument = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        raw_arg = result.reason.split("argument ")[-1].split(" ")[0] if result.reason else ""
+        argument = self._humanize_slot(raw_arg)
         if tool:
             text = (
-                f"I'm not certain which value you'd like me to use for "
-                f"'{argument}' when I {action}. Could you state it explicitly?"
+                f"I want to make sure I get this right — could you confirm "
+                f"the exact {argument} for the {action}?"
                 if argument else
-                f"I'm not certain which value you'd like me to use for {action}. "
-                f"Could you confirm the exact setting you have in mind?"
+                f"I want to make sure I get this right — could you confirm "
+                f"the exact setting for the {action}?"
             )
         else:
             text = (
-                "I'm not certain which value you'd like me to use for that. "
-                "Could you confirm the exact setting you have in mind?"
+                "I want to make sure I get this right — could you confirm "
+                "the exact setting you have in mind?"
             )
         return self._finish(ctx, text)
 
