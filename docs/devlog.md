@@ -4,6 +4,27 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-14 — Partial-Probing (12 Partials × 5 Trials, seed 42)
+
+**Zweck:** Varianzdiagnose auf den 12 Partials aus Subset L (1–2/3 Trials bestanden).
+(a) p-Schätzer pro Task über 8 Trials gesamt (3 Subset-L seed=10 + 5 Probing seed=42).
+(b) Mehrere Fail-Traces pro Task für den Divergenz-Vergleich (Pass vs. Fail).
+
+**Hypothese (VOR dem Lauf):**
+- Die meisten 2/3-Partials (base_44/74/84, hall_44/76/78, dis_53/54) haben p ≈ 0.6–0.8.
+  Erwartung: 2–4 von 5 neuen Trials bestehen → Gesamt-p bestätigt in diesem Band.
+- Die 1/3-Partials (base_70, hall_0, hall_28, dis_38) haben p ≈ 0.2–0.4.
+  Erwartung: 0–2 von 5 neuen Trials bestehen.
+- Keine systematische Late-Trial-Häufung erwartet (kein State-Leakage zwischen Trials,
+  da car-bench jede Trial frisch instanziiert).
+- Fail-Ursachen innerhalb eines Tasks bleiben einpunktig (gleiche Stelle) bei A-Tasks
+  und diffus bei B-Tasks. Erwartung: ≥60 % der Partials sind einpunktig.
+
+**Setup:** 12 Tasks × 5 Trials = 60 Runs. Agent sonnet-4-6, Judge/User gemini-2.5-flash.
+Seed 42 (verschieden von Subset-L seed 10). Kostenschätzung ~$7. TOML: local_partial_probing.toml.
+
+---
+
 ## 2026-07-12 — GENERALPROBE Phase 1: Delta-Lauf (69 neue Tasks × 3 Trials)
 
 **Ziel:** Alle Train-Tasks testen, die bisher nie gelaufen sind (base_40–98, hall_40–94,

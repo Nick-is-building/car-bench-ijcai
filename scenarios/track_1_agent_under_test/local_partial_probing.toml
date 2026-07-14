@@ -1,0 +1,41 @@
+# Partial-Probing — 12 Partials × 5 Trials (seed 42, distinct from Subset L seed 10)
+# Zweck: (a) p-Schätzer pro Partial über 8 Trials gesamt (3 aus L + 5 hier),
+# (b) mehrere Fail-Traces pro Task für Divergenz-Vergleich.
+# 60 Runs. Kostenschätzung ~$7 (~$0.12/Run). Laufzeit ~1h.
+#
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/partial_probing_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_partial_probing.toml \
+#      > _local/runs/partial_probing.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 5
+task_split = "train"
+seed = 42
+max_steps = 50
+
+# Base partials: base_44 (2/3), base_70 (1/3), base_74 (2/3), base_84 (2/3)
+tasks_base_task_id_filter = [
+    "base_44", "base_70", "base_74", "base_84"
+]
+
+# Hallucination partials: hall_0 (1/3), hall_28 (1/3), hall_44 (2/3),
+# hall_76 (2/3), hall_78 (2/3)
+tasks_hallucination_task_id_filter = [
+    "hallucination_0", "hallucination_28", "hallucination_44",
+    "hallucination_76", "hallucination_78"
+]
+
+# Disambiguation partials: dis_38 (1/3), dis_53 (2/3), dis_54 (2/3)
+tasks_disambiguation_task_id_filter = [
+    "disambiguation_38", "disambiguation_53", "disambiguation_54"
+]
