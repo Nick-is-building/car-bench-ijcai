@@ -88,7 +88,7 @@ def main():
     import os
     agent_llm = args.agent_llm or os.getenv("AGENT_LLM", "gemini/gemini-2.5-flash")
     completion_kwargs = {
-        "temperature": args.temperature or os.getenv("AGENT_TEMPERATURE", None),
+        "temperature": args.temperature if args.temperature is not None else (float(os.getenv("AGENT_TEMPERATURE")) if os.getenv("AGENT_TEMPERATURE") else None),
         "thinking": args.thinking or (os.getenv("AGENT_THINKING", "false").lower() == "true"),
         "reasoning_effort": args.reasoning_effort or os.getenv("AGENT_REASONING_EFFORT", "medium"),
         "interleaved_thinking": args.interleaved_thinking or (os.getenv("AGENT_INTERLEAVED_THINKING", "false").lower() == "true"),
