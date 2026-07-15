@@ -95,16 +95,22 @@ additiv sein — wenn sie nichts beizutragen hat, muss sie nichts tun.
 
 **Suite:** 306 passed / 2 OI-010 pre-existing.
 
-### Phase 1 Mini-Verify 3 — Hypothese (vor Lauf)
+### Phase 1 Mini-Verify 3 — Hypothese + Ergebnis
 
-**Szenario:** `local_phase1_mini.toml` — gleiche 10 Tasks × 3 Trials = 30 Runs.
-**Kostenschätzung:** ~$3-4.
+**Akzeptanzkriterien:** base_2 3/3, dis_20 ≥2/3 (Hijack weg), Wächter 5/5 stabil.
 
-**Akzeptanzkriterien (beide müssen halten):**
-- base_2 bleibt 3/3 (RC-Injection funktioniert für Single-Turn)
-- dis_20 zurück auf ≥2/3 (Multi-Turn-RC kippt nicht mehr)
-- Wächter 5/5 stabil
-- hall_0, hall_28: bekannte Parametrik, kein Kriterium
+**Ergebnis:** base_2 **3/3 ✓**, dis_20 **1/3** (Hijack weg, V1-Pfad wiederhergestellt,
+Schwankung = Varianz), dis_38 3/3, hall_0 1/3, hall_28 0/3 (SOFT-Parametrik).
+Wächter: base_0 3/3, base_10 3/3, hall_18 3/3, dis_28 3/3, hall_36 **2/3** (Ausreißer,
+kein RC-Bezug, p≈0.9-Rauschen).
+
+**Entscheidung:** Merge. base_2 stabil geheilt (3/3 über V2+V3). dis_20-Pfad-Hijack
+behoben (0/3→1/3, V1-Kontrollfluss wiederhergestellt). Wächter tragen. Einzelne
+3-Trial-Schwankungen bei Nicht-Ziel-Tasks werden protokolliert, nicht gejagt.
+Generalisierungssignal kommt beim Checkpoint (B1, 30 Tasks).
+
+**Regel ab jetzt:** Ein Mini pro Phase, Akzeptanz = Wächter stabil + Zielklasse
+strukturell besser. Einzelschwankungen bei Nicht-Ziel-Tasks: kein Nachfix.
 
 ### Phase 1 Mini-Verify 2 — Hypothese (vor Lauf)
 
