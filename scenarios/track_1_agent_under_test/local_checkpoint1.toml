@@ -1,0 +1,75 @@
+# Checkpoint 1 — Gruppe A-voll (20 bekannte) + B1 (30 nie-mit-L-Code)
+# 50 Tasks × 3 Trials = 150 Runs. Kostenschätzung ~$17.
+#
+# Gruppe A-voll:
+#   5 Regressionen: base_2, hall_0, hall_28, dis_20, dis_38
+#   10 Fail-Klassen-Repräsentanten: hall_48, hall_82, hall_86, hall_88,
+#     base_64, base_88, dis_48, base_54, base_98, hall_90
+#   5 Stabilitätswächter: base_0, base_10, hall_18, hall_36, dis_28
+#
+# B1 (30 Tasks): Stratified seed-42 draw aus den 69 nicht-in-Subset-L Tasks.
+#   12 Base, 12 Hall, 6 Dis. Nie mit Fix-Paket-L-Code getestet.
+#
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/checkpoint1_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_checkpoint1.toml \
+#      > _local/runs/checkpoint1.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+# Base: 4 Gruppe-A + 12 B1 = 16
+tasks_base_task_id_filter = [
+    # Gruppe A — Regressionen
+    "base_2",
+    # Gruppe A — Fail-Klassen-Repräsentanten
+    "base_54", "base_64", "base_88", "base_98",
+    # Gruppe A — Stabilitätswächter
+    "base_0", "base_10",
+    # B1
+    "base_8", "base_12", "base_18", "base_20", "base_22",
+    "base_30", "base_32", "base_42", "base_58", "base_68",
+    "base_72", "base_92"
+]
+
+# Hall: 9 Gruppe-A + 12 B1 = 21
+tasks_hallucination_task_id_filter = [
+    # Gruppe A — Regressionen
+    "hallucination_0", "hallucination_28",
+    # Gruppe A — Fail-Klassen-Repräsentanten
+    "hallucination_48", "hallucination_82", "hallucination_86",
+    "hallucination_88", "hallucination_90",
+    # Gruppe A — Stabilitätswächter
+    "hallucination_18", "hallucination_36",
+    # B1
+    "hallucination_6", "hallucination_8", "hallucination_10",
+    "hallucination_12", "hallucination_14", "hallucination_22",
+    "hallucination_24", "hallucination_42", "hallucination_52",
+    "hallucination_56", "hallucination_68", "hallucination_92"
+]
+
+# Dis: 7 Gruppe-A + 6 B1 = 13
+tasks_disambiguation_task_id_filter = [
+    # Gruppe A — Regressionen
+    "disambiguation_20", "disambiguation_38",
+    # Gruppe A — Fail-Klassen-Repräsentanten
+    "disambiguation_48",
+    # Gruppe A — Stabilitätswächter
+    "disambiguation_28",
+    # B1
+    "disambiguation_2", "disambiguation_10", "disambiguation_14",
+    "disambiguation_18", "disambiguation_26", "disambiguation_32"
+]

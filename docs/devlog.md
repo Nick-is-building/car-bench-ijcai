@@ -4,6 +4,31 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-15 — Phase 0: Sicherung + B1/B2-Ziehung (Finalplan v2.2)
+
+**Aktion:** Rollback-Tag `v-known-good-L` auf Commit 883db7b gesetzt + gepusht.
+
+**Registry-Korrektur:** Handover §4.1 behauptet "~254 Train-Tasks, ~125 unberührt".
+Tatsächlich: Train-Split = **129 Tasks** (50 Base + 48 Hall + 31 Dis). E2 (erste 20/Split
+= 60) + Delta (Rest = 69) = alle 129 bereits getestet. Null echte Holdouts.
+Ursache: vermutlich Verwechslung mit dem Gesamtdatensatz inkl. Test-Split.
+
+**B1/B2-Adaption:** Pool = 69 Tasks nicht im Subset L (nie mit Fix-Paket-L-Code getestet).
+Davon 46 "sauber" (nur in E2/Delta), 23 auch in früheren Mini-Runs (v.a. alle 14 Dis-Tasks).
+Generalisierungs-Signal = "nie mit aktuellem Code getestet", nicht "nie gesehen".
+
+**Ziehung (stratified, `random.Random(42)`):**
+- B1 (30): 12 Base, 12 Hall, 6 Dis.
+- B2 (39): 15 Base, 16 Hall, 8 Dis.
+- B1∩B2=∅, (B1∪B2)∩SubsetL=∅. Skript: `_local/analysis/draw_b1_b2.py`.
+
+**Szenarien:**
+- `local_checkpoint1.toml`: 20 Gruppe-A-voll + 30 B1 = 50 Tasks × 3 = 150 Runs.
+- `local_final_verify.toml`: 10 Gruppe-A-final + 39 B2 = 49 Tasks × 3 = 147 Runs.
+- `test_scenario_contract.py` Exclusion-Set aktualisiert. Suite: 304 passed / 2 OI-010.
+
+---
+
 ## 2026-07-14 — Partial-Probing (12 Partials × 5 Trials, seed 42)
 
 **Zweck:** Varianzdiagnose auf den 12 Partials aus Subset L (1–2/3 Trials bestanden).

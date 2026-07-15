@@ -1,0 +1,70 @@
+# Final Verify — Gruppe A-final (10 Wächter) + B2 (39 versiegelt)
+# 49 Tasks × 3 Trials = 147 Runs. Kostenschätzung ~$17.
+#
+# Gruppe A-final:
+#   5 Regressionen: base_2, hall_0, hall_28, dis_20, dis_38
+#   5 Stabilitätswächter: base_0, base_10, hall_18, hall_36, dis_28
+#
+# B2 (39 Tasks): Complement von B1, ebenfalls seed-42.
+#   15 Base, 16 Hall, 8 Dis. VERSIEGELT — nur Score lesen, nie Traces analysieren,
+#   nie Fixes daraus ableiten (§1.4/§11 Finalplan).
+#
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/final_verify_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_final_verify.toml \
+#      > _local/runs/final_verify.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+# Base: 2 Gruppe-A + 15 B2 = 17
+tasks_base_task_id_filter = [
+    # Gruppe A — Regressionen
+    "base_2",
+    # Gruppe A — Stabilitätswächter
+    "base_0", "base_10",
+    # B2 (versiegelt)
+    "base_4", "base_6", "base_14", "base_24", "base_26",
+    "base_34", "base_36", "base_38", "base_46", "base_52",
+    "base_56", "base_66", "base_78", "base_90", "base_94"
+]
+
+# Hall: 4 Gruppe-A + 16 B2 = 20
+tasks_hallucination_task_id_filter = [
+    # Gruppe A — Regressionen
+    "hallucination_0", "hallucination_28",
+    # Gruppe A — Stabilitätswächter
+    "hallucination_18", "hallucination_36",
+    # B2 (versiegelt)
+    "hallucination_2", "hallucination_4", "hallucination_16",
+    "hallucination_20", "hallucination_26", "hallucination_32",
+    "hallucination_34", "hallucination_38", "hallucination_46",
+    "hallucination_50", "hallucination_58", "hallucination_60",
+    "hallucination_70", "hallucination_72", "hallucination_84",
+    "hallucination_94"
+]
+
+# Dis: 4 Gruppe-A + 8 B2 = 12
+tasks_disambiguation_task_id_filter = [
+    # Gruppe A — Regressionen
+    "disambiguation_20", "disambiguation_38",
+    # Gruppe A — Stabilitätswächter
+    "disambiguation_28",
+    # B2 (versiegelt)
+    "disambiguation_4", "disambiguation_6", "disambiguation_8",
+    "disambiguation_12", "disambiguation_22", "disambiguation_24",
+    "disambiguation_30", "disambiguation_34"
+]

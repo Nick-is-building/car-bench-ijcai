@@ -99,7 +99,12 @@ class ScenarioContractTest(unittest.TestCase):
                                          "local_k1_verify.toml",
                                          "local_k2_mini.toml",
                                          "local_k7_mini.toml",
-                                         "local_k10_mini.toml"}
+                                         "local_k10_mini.toml",
+                                         "local_subset_L.toml",
+                                         "local_partial_probing.toml",
+                                         "local_generalprobe_delta.toml",
+                                         "local_checkpoint1.toml",
+                                         "local_final_verify.toml"}
                 }
                 self.assertEqual(files, EXPECTED_SCENARIO_FILES)
 
