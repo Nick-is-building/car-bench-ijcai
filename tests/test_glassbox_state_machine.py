@@ -1178,8 +1178,9 @@ class SilentRefusalGuardTest(unittest.TestCase):
         self.assertFalse(ctx.silent_refusal_replan)
         self.assertEqual(trajectory, [])
 
-    def test_silent_refusal_bounded_to_one_replan(self):
-        """Re-plan fires once; second empty plan falls through to VERIFY."""
+    def test_rc_injection_after_double_empty_plan(self):
+        """Re-plan fires once; second empty plan triggers RC-Tool-Injection
+        for REQUIRES_CONFIRMATION tools → confirmation question, no tool call."""
         intent = Intent(
             user_request_summary="Open the trunk door",
             required_tools=["open_close_trunk_door"],
@@ -1197,6 +1198,82 @@ class SilentRefusalGuardTest(unittest.TestCase):
         ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
         self.assertTrue(ctx.silent_refusal_replan)
         self.assertEqual(trajectory, [])
+        self.assertIn("confirmation", action.text.lower())
+        self.assertTrue(
+            any(d.layer == "RC-Tool-Injection.confirmation"
+                for d in ctx.layer_decisions),
+        )
+
+    def test_silent_refusal_bounded_to_one_replan_non_rc(self):
+        """For non-RC tools, double empty plan falls through to VERIFY
+        (RC-injection does NOT fire)."""
+        tools_non_rc = TOOLS + [{"function": {
+            "name": "set_fog_lights",
+            "description": "Turn fog lights on/off.",
+            "parameters": {"properties": {"on": {"type": "boolean"}},
+                           "required": ["on"]},
+        }}]
+        intent = Intent(
+            user_request_summary="Turn on the fog lights",
+            required_tools=["set_fog_lights"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[], done_reason="cannot do it"),
+                Plan(steps=[], done_reason="still cannot"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake, tools=tools_non_rc)
+        self.assertTrue(ctx.silent_refusal_replan)
+        self.assertEqual(trajectory, [])
+        self.assertFalse(
+            any(d.layer == "RC-Tool-Injection.confirmation"
+                for d in ctx.layer_decisions),
+        )
+
+    def test_rc_injection_withdraws_when_already_confirmed(self):
+        """dis_20 class: if _rc_tool_confirmed returns True, the injection
+        does NOTHING — no state transition, no POLICY_CHECK, identical to
+        the pre-injection path (falls through to VERIFY)."""
+        intent = Intent(
+            user_request_summary="Turn on the high beams",
+            required_tools=["set_head_lights_high_beams"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        tools_with_highbeams = TOOLS + [{"function": {
+            "name": "set_head_lights_high_beams",
+            "description": "REQUIRES_CONFIRMATION, Turn high beams on/off.",
+            "parameters": {"properties": {"on": {"type": "boolean"}},
+                           "required": ["on"]},
+        }}]
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[], done_reason="cannot"),
+                Plan(steps=[], done_reason="still cannot"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        machine = StateMachine()
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Oh, okay. Can you turn on the high beams?")
+        ledger.add_user_turn("Yes, please.")
+        ctx = TurnContext(ledger=ledger, tools=tools_with_highbeams, model="fake")
+        with patch.object(glassbox_llm, "call_structured", fake):
+            action = machine.run_turn(ctx)
+        self.assertIsInstance(action, EmitText)
+        self.assertTrue(ctx.silent_refusal_replan)
+        self.assertFalse(
+            any(d.layer == "RC-Tool-Injection.confirmation"
+                for d in ctx.layer_decisions),
+            "Injection must withdraw silently when confirmation already present",
+        )
 
     # --- K-Fix: guard also fires after read-only tool calls (base_10, dis_38 T1) ---
 

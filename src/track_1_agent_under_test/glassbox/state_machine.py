@@ -379,6 +379,66 @@ class StateMachine:
                                 already_executed=sorted(executed_tool_names),
                             )
                             continue
+                # RC-Tool-Injection (LLM-POL:004): re-plan also produced
+                # no steps for a REQUIRES_CONFIRMATION tool that the user
+                # explicitly requested. Probe PolicyChecker with a synthetic
+                # PlannedCall; if it generates a confirmation question,
+                # return it. Otherwise do NOTHING — no state transition,
+                # no fallthrough, identical to the pre-injection path.
+                if ctx.silent_refusal_replan:
+                    from .capability import CapabilityIndex
+                    from .guard import GuardResult
+                    idx = CapabilityIndex(ctx.tools)
+                    required = ctx.intent.get("required_tools", [])
+                    executed_names = {
+                        s.split(":", 1)[0] for s in ctx.executed_signatures
+                    }
+                    rc_inject: list[PlannedCall] = []
+                    for i, t in enumerate(required):
+                        if t in executed_names:
+                            continue
+                        cap = idx.get_tool(t)
+                        if cap and cap.description.startswith(
+                            "REQUIRES_CONFIRMATION"
+                        ):
+                            rc_inject.append(PlannedCall(
+                                tool=t,
+                                arguments={},
+                                call_id=(
+                                    f"call_t{ctx.ledger.current_turn}"
+                                    f"_r{ctx.plan_round}_rc{i}"
+                                ),
+                                rationale="RC-Tool-Injection: synthetic "
+                                          "step for confirmation flow",
+                            ))
+                    if rc_inject:
+                        from .policies import PolicyChecker
+                        pending = {
+                            t for t in required
+                            if matcher.index.has_tool(t)
+                        }
+                        pf = PolicyChecker().pre_flight(
+                            rc_inject, ctx.ledger, matcher.index,
+                            pending_tools=pending,
+                        )
+                        if pf.confirmations:
+                            _log.info(
+                                "RC-Tool-Injection: confirmation generated",
+                                tools=[c.tool for c in rc_inject],
+                            )
+                            ctx.transition(State.POLICY_CHECK)
+                            ctx.layer_decisions.append(GuardResult(
+                                verdict="BLOCK",
+                                layer="RC-Tool-Injection.confirmation",
+                                reason=(
+                                    f"synthetic RC call → confirmation: "
+                                    f"{[c.policy_id for c in pf.confirmations]}"
+                                ),
+                            ))
+                            ctx.policy_violations = pf.confirmations
+                            return self._respond_confirmation(
+                                ctx, pf.confirmations
+                            )
                 break
 
             calls: list[PlannedCall] = []
@@ -403,13 +463,35 @@ class StateMachine:
                                if not matcher.index.has_parameter(call.tool, a)]
                     if unknown:
                         from .guard import GuardResult
+                        user_requested = set()
+                        for tp in (ctx.intent or {}).get("required_params", []) or []:
+                            tp_tool = tp.get("tool", "") if isinstance(tp, dict) else getattr(tp, "tool", "")
+                            tp_arg = tp.get("argument", "") if isinstance(tp, dict) else getattr(tp, "argument", "")
+                            if tp_tool == call.tool and tp_arg in unknown:
+                                user_requested.add(tp_arg)
+                        if user_requested:
+                            for a in user_requested:
+                                human = a.replace("_", " ")
+                                ctx.policy_notes.append(
+                                    f"The user asked to set {human} on "
+                                    f"{call.tool.replace('_', ' ')}, but this "
+                                    f"parameter is not available. Acknowledge this "
+                                    f"limitation in your response."
+                                )
+                            ctx.layer_decisions.append(GuardResult(
+                                verdict="BLOCK",
+                                layer="ArgumentSchema.removed_param",
+                                reason=f"user-requested non-schema param(s) "
+                                       f"{sorted(user_requested)} on {call.tool}",
+                            ))
                         kept = {a: v for a, v in call.arguments.items()
                                 if a not in unknown}
                         for a in unknown:
-                            ctx.policy_notes.append(
-                                f"stripped unknown argument {a!r}, not in schema "
-                                f"for tool {call.tool}"
-                            )
+                            if a not in user_requested:
+                                ctx.policy_notes.append(
+                                    f"stripped unknown argument {a!r}, not in schema "
+                                    f"for tool {call.tool}"
+                                )
                         ctx.layer_decisions.append(GuardResult(
                             verdict="UNCERTAIN", layer="ArgumentSchema.unknown",
                             reason=f"stripped non-schema argument(s) {unknown} "
@@ -418,6 +500,7 @@ class StateMachine:
                         _log.info(
                             "Unknown-argument guard: stripped non-schema args",
                             tool=call.tool, stripped=unknown,
+                            user_requested=sorted(user_requested),
                         )
                         call = PlannedCall(
                             tool=call.tool, arguments=kept,
@@ -769,46 +852,84 @@ class StateMachine:
     def _verify_and_respond(self, ctx: TurnContext) -> Action:
         from .guard import (
             FabricationGuard, GuardResult, inject_unknown_caveat,
-            strip_action_promises,
+            strip_action_promises, detect_action_promises,
+            detect_inability_contradictions,
         )
         from .auditor import Auditor
         from . import prompts
+        from .capability import CapabilityIndex
 
         ctx.transition(State.VERIFY)
-        draft = prompts.verify.draft_response(ctx)
 
-        # Stufe 7: deterministic self-check of the draft's declared claims
-        # (no LLM call of its own — parses the forced self-check in `draft.claims`).
-        audit = Auditor().pre_response_check(draft, ctx.ledger,
-                                              policy_notes=ctx.policy_notes)
-        ctx.layer_decisions.append(GuardResult(
-            verdict="BLOCK" if not audit.passed else "PASS",
-            layer="Auditor.pre_response",
-            reason=("; ".join(audit.issues) if audit.issues else "all claims backed"),
-        ))
+        cap_index = CapabilityIndex(ctx.tools)
+        catalog_tools = set(cap_index.tool_names)
+        rc_tools = {
+            name for name in catalog_tools
+            if (cap := cap_index.get_tool(name)) is not None
+            and cap.description.startswith("REQUIRES_CONFIRMATION")
+        }
+        has_open_confirmation = bool(getattr(ctx, "policy_violations", None))
 
-        fg = FabricationGuard()
-        # Fix 1e — pass the runtime tool catalog so the sanitizer can flag
-        # false-inability sentences about tools that are actually available.
-        from .capability import CapabilityIndex
-        catalog_tools = set(CapabilityIndex(ctx.tools).tool_names)
-        safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model,
-                           policy_notes=ctx.policy_notes,
-                           catalog_tools=catalog_tools)
-        ctx.layer_decisions.append(GuardResult(
-            verdict="BLOCK" if safe != audit.safe_text else "PASS",
-            layer="FabricationGuard.C5",
-            reason="draft modified" if safe != audit.safe_text else "draft clean",
-        ))
+        _MAX_SOFT_REDRAFTS = 2
+        soft_feedback: list[str] | None = None
 
-        safe = inject_unknown_caveat(safe, ctx.ledger, ctx.executed_signatures)
+        for soft_round in range(_MAX_SOFT_REDRAFTS + 1):
+            draft = prompts.verify.draft_response(ctx, soft_feedback=soft_feedback)
 
-        # Fix 5 — Announce-Stall-Detektor: if the turn ends here (no more tool
-        # calls will follow) and the draft still contains action promises
-        # ("let me...", "I'll now..."), those promises become HALLUCINATION_ERROR
-        # in the user-sim (hall_44 T1, hall_76 0/3, hall_82, hall_86, dis_54).
-        # Strip the promise sentences deterministically — what actually happened
-        # remains, what was promised without execution is removed.
+            audit = Auditor().pre_response_check(draft, ctx.ledger,
+                                                  policy_notes=ctx.policy_notes)
+            if soft_round == 0:
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK" if not audit.passed else "PASS",
+                    layer="Auditor.pre_response",
+                    reason=("; ".join(audit.issues) if audit.issues else "all claims backed"),
+                ))
+
+            fg = FabricationGuard()
+            safe = fg.sanitize(audit.safe_text, ctx.ledger, model=ctx.model,
+                               policy_notes=ctx.policy_notes,
+                               catalog_tools=catalog_tools,
+                               rc_tools=rc_tools)
+            if soft_round == 0:
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK" if safe != audit.safe_text else "PASS",
+                    layer="FabricationGuard.C5",
+                    reason="draft modified" if safe != audit.safe_text else "draft clean",
+                ))
+
+            safe = inject_unknown_caveat(safe, ctx.ledger, ctx.executed_signatures)
+
+            findings = []
+            f = detect_action_promises(safe, ctx.ledger,
+                                       has_open_confirmation=has_open_confirmation)
+            if f is not None:
+                findings.append(f)
+            f = detect_inability_contradictions(safe, ctx.ledger,
+                                                catalog_tools=catalog_tools,
+                                                rc_tools=rc_tools)
+            if f is not None:
+                findings.append(f)
+
+            if not findings:
+                break
+
+            if soft_round < _MAX_SOFT_REDRAFTS:
+                soft_feedback = [fi.feedback for fi in findings]
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="SoftGuard.redraft",
+                    reason=f"round {soft_round + 1}: {[fi.layer for fi in findings]}",
+                    severity="SOFT",
+                ))
+                continue
+
+            ctx.layer_decisions.append(GuardResult(
+                verdict="PASS", layer="SoftGuard.pass_through",
+                reason=f"persistent after {_MAX_SOFT_REDRAFTS} re-drafts: "
+                       f"{[fi.layer for fi in findings]}",
+                severity="SOFT",
+            ))
+            break
+
         before = safe
         safe = strip_action_promises(safe)
         if safe != before:

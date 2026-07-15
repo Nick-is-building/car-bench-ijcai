@@ -226,13 +226,13 @@ class Fix3NavArgumentValidatorTest(unittest.TestCase):
         ])
         args = {
             "new_waypoint_id": "loc_B",
-            "route_id_leading_away_from_previous_waypoint": "r_bad",
+            "route_id_leading_away_from_new_waypoint": "r_bad",
         }
         res = check_navigation_arguments(
             "navigation_replace_one_waypoint", args, led)
         self.assertFalse(res.ok)
-        self.assertEqual(res.repaired["route_id_leading_away_from_previous_waypoint"], "r_good")
-        self.assertIn("route_id_leading_away_from_previous_waypoint", res.replaced)
+        self.assertEqual(res.repaired["route_id_leading_away_from_new_waypoint"], "r_good")
+        self.assertIn("route_id_leading_away_from_new_waypoint", res.replaced)
 
     def test_replace_final_destination_end_id_mismatch_repaired(self):
         led = self._ledger_with_routes([
@@ -256,7 +256,7 @@ class Fix3NavArgumentValidatorTest(unittest.TestCase):
              "duration_hours": 2, "distance_km": 150},
         ])
         args = {"new_waypoint_id": "loc_B",
-                "route_id_leading_away_from_previous_waypoint": "r_ok"}
+                "route_id_leading_away_from_new_waypoint": "r_ok"}
         res = check_navigation_arguments(
             "navigation_replace_one_waypoint", args, led)
         self.assertTrue(res.ok)
@@ -266,7 +266,7 @@ class Fix3NavArgumentValidatorTest(unittest.TestCase):
         """Route id not in the ledger — surface a hint, do not guess a replacement."""
         led = self._ledger_with_routes([])
         args = {"new_waypoint_id": "loc_B",
-                "route_id_leading_away_from_previous_waypoint": "r_never_seen"}
+                "route_id_leading_away_from_new_waypoint": "r_never_seen"}
         res = check_navigation_arguments(
             "navigation_replace_one_waypoint", args, led)
         self.assertFalse(res.ok)

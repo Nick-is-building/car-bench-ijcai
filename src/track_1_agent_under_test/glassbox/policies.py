@@ -592,6 +592,17 @@ def _user_picked_route(ledger: Ledger) -> bool:
     return False
 
 
+def _nav_not_active(ledger: Ledger) -> bool:
+    """Fix 2-refined: True if navigation is NOT currently active.
+
+    The route-choice confirmation gate should only fire when the user is
+    starting a NEW navigation — not when replacing a route on an already
+    active navigation (dis_20, dis_38 regression).
+    """
+    state = derive_known_state(ledger)
+    return state.get("navigation_active") is not True
+
+
 def _single_stop_set(args: dict) -> bool:
     """Fix 2 trigger gate for set_new_navigation: single-stop (one leg) only.
     Multi-stop is handled by the existing LLM-POL:022 obligation note."""
@@ -1345,12 +1356,10 @@ def _eval_requires_confirmation(rule: RequiresConfirmationRule, env: _Env) -> No
             cap = env.index.get_tool(call.tool)
             if cap is None or not cap.description.startswith(rule.description_prefix):
                 continue
-        # Fix 2: for the route-choice presentation gate, only fire when the
-        # ledger actually holds multiple alternative routes for the referenced
-        # leg — otherwise proceed as normal (no artificial confirmation for
-        # single-alt legs, no false positive when routes have not been queried).
         if rule.policy_id == "LLM-POL:022-single":
             if not _has_multi_alternatives(env.ledger, call.arguments):
+                continue
+            if call.tool == "set_new_navigation" and not _nav_not_active(env.ledger):
                 continue
         if not rule.condition(env.ledger):        # precondition absent/unknown → Null-FP
             continue
