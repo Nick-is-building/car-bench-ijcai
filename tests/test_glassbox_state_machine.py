@@ -1178,8 +1178,9 @@ class SilentRefusalGuardTest(unittest.TestCase):
         self.assertFalse(ctx.silent_refusal_replan)
         self.assertEqual(trajectory, [])
 
-    def test_silent_refusal_bounded_to_one_replan(self):
-        """Re-plan fires once; second empty plan falls through to VERIFY."""
+    def test_rc_injection_after_double_empty_plan(self):
+        """Re-plan fires once; second empty plan triggers RC-Tool-Injection
+        for REQUIRES_CONFIRMATION tools → confirmation question, no tool call."""
         intent = Intent(
             user_request_summary="Open the trunk door",
             required_tools=["open_close_trunk_door"],
@@ -1197,6 +1198,42 @@ class SilentRefusalGuardTest(unittest.TestCase):
         ctx, trajectory, action = run_scripted(fake, tools=self.TOOLS_WITH_TRUNK)
         self.assertTrue(ctx.silent_refusal_replan)
         self.assertEqual(trajectory, [])
+        self.assertIn("confirmation", action.text.lower())
+        self.assertTrue(
+            any(d.layer == "RC-Tool-Injection.confirmation"
+                for d in ctx.layer_decisions),
+        )
+
+    def test_silent_refusal_bounded_to_one_replan_non_rc(self):
+        """For non-RC tools, double empty plan falls through to VERIFY
+        (RC-injection does NOT fire)."""
+        tools_non_rc = TOOLS + [{"function": {
+            "name": "set_fog_lights",
+            "description": "Turn fog lights on/off.",
+            "parameters": {"properties": {"on": {"type": "boolean"}},
+                           "required": ["on"]},
+        }}]
+        intent = Intent(
+            user_request_summary="Turn on the fog lights",
+            required_tools=["set_fog_lights"],
+            is_state_changing=True,
+            is_ambiguous=False,
+        )
+        fake = FakeLLM(
+            intents=[intent],
+            plans=[
+                Plan(steps=[], done_reason="cannot do it"),
+                Plan(steps=[], done_reason="still cannot"),
+            ],
+            drafts=[FAKE_DRAFT],
+        )
+        ctx, trajectory, action = run_scripted(fake, tools=tools_non_rc)
+        self.assertTrue(ctx.silent_refusal_replan)
+        self.assertEqual(trajectory, [])
+        self.assertFalse(
+            any(d.layer == "RC-Tool-Injection.confirmation"
+                for d in ctx.layer_decisions),
+        )
 
     # --- K-Fix: guard also fires after read-only tool calls (base_10, dis_38 T1) ---
 

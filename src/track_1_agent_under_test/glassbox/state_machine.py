@@ -379,6 +379,65 @@ class StateMachine:
                                 already_executed=sorted(executed_tool_names),
                             )
                             continue
+                # RC-Tool-Injection (LLM-POL:004): re-plan also produced
+                # no steps for a REQUIRES_CONFIRMATION tool that the user
+                # explicitly requested. Inject a synthetic PlannedCall so
+                # PolicyChecker's RequiresConfirmationRule triggers the
+                # confirmation flow. The synthetic call is NEVER emitted
+                # as a real tool call — only confirmation questions pass.
+                if ctx.silent_refusal_replan:
+                    from .capability import CapabilityIndex
+                    from .guard import GuardResult
+                    idx = CapabilityIndex(ctx.tools)
+                    required = ctx.intent.get("required_tools", [])
+                    executed_names = {
+                        s.split(":", 1)[0] for s in ctx.executed_signatures
+                    }
+                    rc_inject: list[PlannedCall] = []
+                    for i, t in enumerate(required):
+                        if t in executed_names:
+                            continue
+                        cap = idx.get_tool(t)
+                        if cap and cap.description.startswith(
+                            "REQUIRES_CONFIRMATION"
+                        ):
+                            rc_inject.append(PlannedCall(
+                                tool=t,
+                                arguments={},
+                                call_id=(
+                                    f"call_t{ctx.ledger.current_turn}"
+                                    f"_r{ctx.plan_round}_rc{i}"
+                                ),
+                                rationale="RC-Tool-Injection: synthetic "
+                                          "step for confirmation flow",
+                            ))
+                    if rc_inject:
+                        _log.info(
+                            "RC-Tool-Injection: planner refuses RC tools, "
+                            "injecting synthetic steps for confirmation",
+                            tools=[c.tool for c in rc_inject],
+                        )
+                        ctx.transition(State.POLICY_CHECK)
+                        pf = self._policy_pre_flight(
+                            ctx, rc_inject, matcher
+                        )
+                        if pf.confirmations:
+                            ctx.layer_decisions.append(GuardResult(
+                                verdict="BLOCK",
+                                layer="RC-Tool-Injection.confirmation",
+                                reason=(
+                                    f"synthetic RC call → confirmation: "
+                                    f"{[c.policy_id for c in pf.confirmations]}"
+                                ),
+                            ))
+                            ctx.policy_violations = pf.confirmations
+                            return self._respond_confirmation(
+                                ctx, pf.confirmations
+                            )
+                        _log.info(
+                            "RC-Tool-Injection: no confirmation generated "
+                            "(already confirmed or rule didn't fire)",
+                        )
                 break
 
             calls: list[PlannedCall] = []

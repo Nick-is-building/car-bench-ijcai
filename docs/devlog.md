@@ -37,7 +37,61 @@ Argument vom User angefragt war (`intent.required_params`). In dem Fall: Acknowl
 
 **Suite:** 304 passed / 2 OI-010 pre-existing.
 
-### Phase 1 Mini-Verify — Hypothese (vor Lauf)
+### Phase 1 Mini-Verify 1 — Ergebnis
+
+**Ergebnis (30 Runs):** Wächter 5/5 stabil (alle 3/3). Regressionen 2/5 geheilt.
+
+| Task | Hypothese | Ergebnis | Diagnose |
+|---|---|---|---|
+| base_2 (Regr.) | 3/3 | **0/3** | Strukturell: Planner plant RC-Tools nicht. PLAN→PLAN→VERIFY→RESPOND, kein EXECUTE. |
+| hall_0 (Regr.) | 2-3/3 | **3/3** ✓ | SOFT-Loop heilt. |
+| hall_28 (Regr.) | 2-3/3 | **2/3** | Mixed: 1 strukturell (Planner), 1 parametrisch ("I still need to"), 1 Pass. Akzeptiert als Optimum. |
+| dis_20 (Regr.) | 3/3 | **3/3** ✓ | nav-active-Check wirkt. |
+| dis_38 (Regr.) | 2-3/3 | **3/3** ✓ | nav-active-Check + re-plan. |
+| Wächter (5) | alle 3/3 | alle 3/3 ✓ | Keine Berührung. |
+
+**Entscheidung:** base_2 → RC-Tool-Injection nachfix (Path A). hall_28 → parametrischer
+Mixed-Mode akzeptiert (1/3 = Optimum, kein Fix).
+
+### Phase 1 Nachfix: RC-Tool-Injection (LLM-POL:004)
+
+**Ursache (base_2):** Planner behandelt REQUIRES_CONFIRMATION-Tools als Tabu und plant
+sie nie. Silent-Refusal-Guard feuert, Re-Plan auch leer → VERIFY → Textantwort ohne
+Confirmation-Rückfrage. GT erwartet Multi-Turn-Confirmation-Flow.
+
+**Fix (state_machine.py:388-440):** Nach fehlgeschlagenem Re-Plan: wenn pending required
+Tool ein RC-Tool ist (description starts with "REQUIRES_CONFIRMATION"), synthetischen
+PlannedCall injizieren → PolicyChecker's RequiresConfirmationRule blockt → Confirmation-
+Rückfrage generiert. Der synthetische Call wird NIE als Tool-Call emittiert — nur
+Confirmations passieren.
+
+**Sicherheitsgarantie:** Test `test_rc_injection_after_double_empty_plan` verifiziert:
+trajectory=[] (kein Tool-Call), "confirmation" im Text, GuardResult-Layer gesetzt.
+Test `test_silent_refusal_bounded_to_one_replan_non_rc` verifiziert: für Nicht-RC-Tools
+feuert die Injection NICHT.
+
+**Suite:** 305 passed / 2 OI-010 pre-existing.
+
+### Phase 1 Mini-Verify 2 — Hypothese (vor Lauf)
+
+**Szenario:** `local_phase1_mini.toml` — gleiche 10 Tasks × 3 Trials = 30 Runs.
+**Kostenschätzung:** ~$3-4 (Agent Sonnet-4-6, Judge/User gemini-2.5-flash).
+
+**Geänderte Erwartung gegenüber Mini-Verify 1:**
+
+| Task | Mini-V1 | Hypothese Mini-V2 | Grund |
+|---|---|---|---|
+| base_2 (Regr.) | 0/3 | 3/3 | RC-Tool-Injection: synthetischer Step → Confirmation-Flow |
+| hall_0 (Regr.) | 3/3 | 3/3 | Stabil, kein Änderung |
+| hall_28 (Regr.) | 2/3 | 2/3 | Akzeptiert, kein Fix, parametrischer Mixed-Mode |
+| dis_20 (Regr.) | 3/3 | 3/3 | Stabil, keine Änderung |
+| dis_38 (Regr.) | 3/3 | 3/3 | Stabil, keine Änderung |
+| Wächter (5) | alle 3/3 | alle 3/3 | RC-Injection feuert nur für RC-Tools, kein Seiteneffekt |
+
+**Akzeptanz:** ≥4/5 Regressionen geheilt (3/3); alle 5 Wächter 3/3.
+base_2 ≥2/3 = RC-Injection wirkt. hall_28 ≥1/3 = akzeptiert.
+
+### Phase 1 Mini-Verify 1 — Hypothese (vor Lauf)
 
 **Szenario:** `local_phase1_mini.toml` — 10 Tasks × 3 Trials = 30 Runs.
 **Kostenschätzung:** ~$3-4 (Agent Sonnet-4-6, Judge/User gemini-2.5-flash).
