@@ -72,6 +72,40 @@ feuert die Injection NICHT.
 
 **Suite:** 305 passed / 2 OI-010 pre-existing.
 
+### Phase 1 Mini-Verify 2 — Ergebnis
+
+**base_2: 3/3 ✓** (RC-Injection funktioniert). **Wächter: 5/5 stabil.** Aber **dis_20: 0/3**
+(3/3→0/3 Kippsturz). hall_0: 1/3, hall_28: 0/3 (bekannte SOFT-Loop-Parametrik).
+
+**Trace-Diagnose dis_20:** Strukturelle Divergenz, KEINE Varianz. dis_20 nutzt
+`set_head_lights_high_beams` — ein RC-Tool. Die RC-Injection feuert in allen 3 Trials:
+- Trials 0+1: `_rc_tool_confirmed` sieht "Oh, okay" als Affirmative → Injection fällt
+  durch zu VERIFY mit State-Transition-Seiteneffekt → Agent-Text klingt assertiv statt
+  als LLM-POL:004-Rückfrage.
+- Trial 2: Leere Args → Confirmation-Template sagt "set to off" → User lehnt ab → Stall.
+
+**Ursache:** Pfad-Hijack bei nicht-generierter Confirmation. Die Injection darf nur
+additiv sein — wenn sie nichts beizutragen hat, muss sie nichts tun.
+
+### Phase 1 Nachfix 2: Additiv-only RC-Injection
+
+**Fix (state_machine.py:412-439):** `PolicyChecker().pre_flight()` wird direkt aufgerufen
+(ohne `ctx.transition`). `ctx.transition(State.POLICY_CHECK)` und Return nur INNERHALB
+`if pf.confirmations:`. Bei leerer Confirmation: zero side effects, byte-identisch zu V1.
+
+**Suite:** 306 passed / 2 OI-010 pre-existing.
+
+### Phase 1 Mini-Verify 3 — Hypothese (vor Lauf)
+
+**Szenario:** `local_phase1_mini.toml` — gleiche 10 Tasks × 3 Trials = 30 Runs.
+**Kostenschätzung:** ~$3-4.
+
+**Akzeptanzkriterien (beide müssen halten):**
+- base_2 bleibt 3/3 (RC-Injection funktioniert für Single-Turn)
+- dis_20 zurück auf ≥2/3 (Multi-Turn-RC kippt nicht mehr)
+- Wächter 5/5 stabil
+- hall_0, hall_28: bekannte Parametrik, kein Kriterium
+
 ### Phase 1 Mini-Verify 2 — Hypothese (vor Lauf)
 
 **Szenario:** `local_phase1_mini.toml` — gleiche 10 Tasks × 3 Trials = 30 Runs.
