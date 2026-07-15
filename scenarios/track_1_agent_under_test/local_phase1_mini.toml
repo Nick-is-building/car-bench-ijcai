@@ -1,0 +1,43 @@
+# Phase 1 Mini-Verify — 5 Regressionen + 5 Stabilitätswächter
+# 10 Tasks × 3 Trials = 30 Runs. Kostenschätzung ~$3-4.
+#
+# Akzeptanz: ≥4/5 Regressionen wieder 3/3; alle 5 Wächter 3/3.
+#
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/phase1_mini_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_phase1_mini.toml \
+#      > _local/runs/phase1_mini.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+# Base: 3 Tasks (1 Regression + 2 Wächter)
+tasks_base_task_id_filter = [
+    "base_2",
+    "base_0", "base_10"
+]
+
+# Hallucination: 4 Tasks (2 Regressionen + 2 Wächter)
+tasks_hallucination_task_id_filter = [
+    "hallucination_0", "hallucination_28",
+    "hallucination_18", "hallucination_36"
+]
+
+# Disambiguation: 3 Tasks (2 Regressionen + 1 Wächter)
+tasks_disambiguation_task_id_filter = [
+    "disambiguation_20", "disambiguation_38",
+    "disambiguation_28"
+]

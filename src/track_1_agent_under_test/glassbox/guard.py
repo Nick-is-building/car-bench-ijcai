@@ -36,12 +36,16 @@ from .ledger import Ledger
 GuardVerdict = Literal["PASS", "BLOCK", "UNCERTAIN"]
 
 
+GuardSeverity = Literal["HARD", "SOFT"]
+
+
 @dataclass
 class GuardResult:
     """Uniform decision record for every guard layer."""
     verdict: GuardVerdict
     layer: str
     reason: str = ""
+    severity: GuardSeverity = "HARD"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +134,102 @@ _ACTION_PROMISE_PATTERNS = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+
+_META_WHITELIST = re.compile(
+    r"\b(let me (?:confirm|summarize|recap|review|verify))\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class SoftFinding:
+    """A SOFT guard finding: feedback to inject into re-draft, not a mutation."""
+    layer: str
+    sentences: list[str]
+    feedback: str
+
+
+def detect_action_promises(
+    draft: str,
+    ledger: "Ledger",
+    has_open_confirmation: bool = False,
+) -> SoftFinding | None:
+    """Fix 5-refined — detect promise sentences under strict preconditions.
+
+    Returns a SoftFinding if problematic sentences are found, None otherwise.
+    Preconditions (all must hold for a sentence to be flagged):
+      1. Sentence matches _ACTION_PROMISE_PATTERNS
+      2. Sentence is NOT on the meta-whitelist (confirm/summarize/recap)
+      3. There is no open confirmation request (would justify "let me...")
+      4. The promised action is state-changing AND no SUCCESS for that entity
+    """
+    if has_open_confirmation:
+        return None
+    sentences = re.split(r"(?<=[.!?])\s+", draft)
+    successful = _successful_tool_names(ledger)
+    flagged = []
+    for s in sentences:
+        if not _ACTION_PROMISE_PATTERNS.search(s):
+            continue
+        if _META_WHITELIST.search(s):
+            continue
+        s_lower = s.lower()
+        entity_has_success = False
+        for tool in successful:
+            entity_words = _tool_entity_synonyms(tool)
+            if entity_words and any(w in s_lower for w in entity_words):
+                entity_has_success = True
+                break
+        if entity_has_success:
+            continue
+        flagged.append(s)
+    if not flagged:
+        return None
+    return SoftFinding(
+        layer="AnnounceStall.soft",
+        sentences=flagged,
+        feedback=(
+            "Your draft contains action promises that will not be executed this turn. "
+            "Remove or rephrase these sentences — report only what has already happened: "
+            + "; ".join(repr(s[:80]) for s in flagged)
+        ),
+    )
+
+
+def detect_inability_contradictions(
+    draft: str,
+    ledger: "Ledger",
+    catalog_tools: set[str] | None = None,
+    rc_tools: set[str] | None = None,
+) -> SoftFinding | None:
+    """Fix 1e-refined — detect false inability claims, excluding RC tools.
+
+    REQUIRES_CONFIRMATION tools are excluded from the catalog scan: the agent
+    legitimately cannot execute them without confirmation, so "I can't do that"
+    is not a contradiction (base_2 regression).
+    """
+    successful = _successful_tool_names(ledger)
+    catalog_filtered = (catalog_tools or set()) - (rc_tools or set())
+    available = successful | catalog_filtered
+    if not available:
+        return None
+    flagged = []
+    for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        tool = _inability_contradicts_ledger(sentence, available)
+        if tool is not None:
+            flagged.append(sentence)
+    if not flagged:
+        return None
+    return SoftFinding(
+        layer="InabilityContradiction.soft",
+        sentences=flagged,
+        feedback=(
+            "Your draft claims inability for actions that are actually available. "
+            "Remove or correct these false inability claims: "
+            + "; ".join(repr(s[:80]) for s in flagged)
+        ),
+    )
 
 
 def strip_action_promises(draft: str) -> str:
@@ -444,7 +544,7 @@ def _pick_route_from(ledger: Ledger, start_id: str, dest_id: str | None = None,
 #   waypoint_arg is either an argument name on the same call ("new_waypoint_id")
 #   or the special token "@prev_last_waypoint" resolved from the ledger.
 _NAV_ROUTE_ID_CONSTRAINTS: dict[tuple[str, str], tuple[str, str]] = {
-    ("navigation_replace_one_waypoint", "route_id_leading_away_from_previous_waypoint"):
+    ("navigation_replace_one_waypoint", "route_id_leading_away_from_new_waypoint"):
         ("start", "new_waypoint_id"),
     ("navigation_replace_one_waypoint", "route_id_leading_to_new_waypoint"):
         ("end", "new_waypoint_id"),
@@ -782,7 +882,8 @@ class FabricationGuard:
 
     def sanitize(self, draft: str, ledger: Ledger, model: str | None = None,
                  policy_notes: list[str] | tuple[str, ...] = (),
-                 catalog_tools: set[str] | None = None) -> str:
+                 catalog_tools: set[str] | None = None,
+                 rc_tools: set[str] | None = None) -> str:
         """
         C5: remove or replace unsupported factual claims in draft.
         Mandatory route-choice mention added if missing (OI-012 partial).
@@ -864,24 +965,25 @@ class FabricationGuard:
             else:
                 safe = "I'm sorry, I don't have confirmed information about that."
 
-        safe = self._fix_inability_contradictions(safe, ledger, catalog=catalog_tools)
+        safe = self._fix_inability_contradictions(safe, ledger, catalog=catalog_tools,
+                                                     rc_tools=rc_tools)
 
         return self._add_route_mention_if_missing(safe, ledger)
 
     @staticmethod
     def _fix_inability_contradictions(draft: str, ledger: Ledger,
-                                       catalog: set[str] | None = None) -> str:
+                                       catalog: set[str] | None = None,
+                                       rc_tools: set[str] | None = None) -> str:
         """Replace false inability claims that contradict either successful
         tool calls OR available catalog tools (Fix 1e).
 
-        Fix 1e: catalog-based check catches base_60 T0 / hall_90 T1 — the
-        agent claims "aren't available to me right now" for tools the
-        evaluator has just presented as available. Read-only against the
-        provided catalog set; catalog=None keeps the original successful-only
-        behavior for callers that don't pass one.
+        Fix 1e-refined: REQUIRES_CONFIRMATION tools are excluded from the
+        catalog scan — the agent legitimately cannot execute them without
+        confirmation, so "I can't do that" is not a contradiction (base_2).
         """
         successful = _successful_tool_names(ledger)
-        available = (successful | (catalog or set()))
+        catalog_filtered = (catalog or set()) - (rc_tools or set())
+        available = (successful | catalog_filtered)
         if not available:
             return draft
         fixed = draft

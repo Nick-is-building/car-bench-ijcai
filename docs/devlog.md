@@ -4,6 +4,64 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-15 — Phase 1: Severity-Mechanismus + Regressionsheilung (Finalplan §3)
+
+**Architektur: SOFT re-draft loop (§3.1)**
+- `GuardResult` um `severity: HARD|SOFT` erweitert (guard.py).
+- `SoftFinding` dataclass + `detect_action_promises()` + `detect_inability_contradictions()`
+  als SOFT-Detektoren (guard.py): erkennen Befunde, mutieren nicht.
+- `draft_response()` akzeptiert `soft_feedback` (verify.py): Guard-Feedback als Constraint-
+  Block im nächsten Draft injiziert.
+- `_verify_and_respond()` SOFT-Loop (state_machine.py): max 2 Re-Drafts mit Feedback,
+  danach `soft_pass_through` — Text unverändert durchlassen statt Task töten.
+
+**Fix 5-refined (hall_0, hall_28):** `detect_action_promises` mit Vorbedingungen:
+Meta-Whitelist (confirm/summarize/recap), keine offene Confirmation, Entity-SUCCESS-Check.
+Danach SOFT.
+
+**Fix 1e-refined (base_2):** `_fix_inability_contradictions` + `detect_inability_contradictions`
+schließen REQUIRES_CONFIRMATION-Tools vom Katalog-Scan aus. Agent darf legitimerweise sagen
+"I can't do that" für RC-Tools ohne Bestätigung.
+
+**Fix 2-refined (dis_20, dis_38):** `_nav_not_active(ledger)` Check in
+`_eval_requires_confirmation` für LLM-POL:022-single. Route-Choice-Confirmation feuert
+nur bei NEUER Navigation, nicht bei aktivem Replace.
+
+**Fix 3-completed (hall_80):** Constraint-Tabelle `_NAV_ROUTE_ID_CONSTRAINTS` korrigiert:
+`route_id_leading_away_from_previous_waypoint` → `route_id_leading_away_from_new_waypoint`
+(tatsächlicher Tool-Parameter-Name laut Schema). Tests entsprechend aktualisiert.
+
+**Fix 4-completed (hall_88):** Unknown-Argument-Guard erkennt jetzt, wenn ein gestripptes
+Argument vom User angefragt war (`intent.required_params`). In dem Fall: Acknowledge-Note
+"parameter is not available" in `policy_notes` statt stilles Strip.
+
+**Suite:** 304 passed / 2 OI-010 pre-existing.
+
+### Phase 1 Mini-Verify — Hypothese (vor Lauf)
+
+**Szenario:** `local_phase1_mini.toml` — 10 Tasks × 3 Trials = 30 Runs.
+**Kostenschätzung:** ~$3-4 (Agent Sonnet-4-6, Judge/User gemini-2.5-flash).
+
+**Erwartung pro Task:**
+
+| Task | Vorher (L) | Hypothese | Grund |
+|---|---|---|---|
+| base_2 (Regr.) | 0/3 | 3/3 | Fix 1e-refined: RC-Tools vom Katalog ausgeschlossen |
+| hall_0 (Regr.) | 0/3 | 2-3/3 | Fix 5-refined SOFT + historische Varianz (hall_0 war immer 0-2/3) |
+| hall_28 (Regr.) | 0/3 | 2-3/3 | Fix 5-refined SOFT, gleicher Mechanismus wie hall_0 |
+| dis_20 (Regr.) | 0/3 | 3/3 | Fix 2-refined: nav-active-Check verhindert falschen Block |
+| dis_38 (Regr.) | 0/3 | 2-3/3 | Fix 2-refined + Stochastik (dis_38 war historisch instabil) |
+| base_0 (Wächter) | 3/3 | 3/3 | Keine Berührung |
+| base_10 (Wächter) | 3/3 | 3/3 | Keine Berührung |
+| hall_18 (Wächter) | 3/3 | 3/3 | Keine Berührung |
+| hall_36 (Wächter) | 3/3 | 3/3 | Keine Berührung |
+| dis_28 (Wächter) | 3/3 | 3/3 | Keine Berührung |
+
+**Akzeptanz (Finalplan §3):** ≥4/5 Regressionen geheilt (3/3); alle 5 Wächter 3/3.
+**Rollback-Kriterium:** <4 Regressionen geheilt ODER ≥1 Wächter <3/3 → Branch verwerfen.
+
+---
+
 ## 2026-07-15 — Phase 0: Sicherung + B1/B2-Ziehung (Finalplan v2.2)
 
 **Aktion:** Rollback-Tag `v-known-good-L` auf Commit 883db7b gesetzt + gepusht.

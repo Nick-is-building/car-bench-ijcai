@@ -104,7 +104,8 @@ class ScenarioContractTest(unittest.TestCase):
                                          "local_partial_probing.toml",
                                          "local_generalprobe_delta.toml",
                                          "local_checkpoint1.toml",
-                                         "local_final_verify.toml"}
+                                         "local_final_verify.toml",
+                                         "local_phase1_mini.toml"}
                 }
                 self.assertEqual(files, EXPECTED_SCENARIO_FILES)
 

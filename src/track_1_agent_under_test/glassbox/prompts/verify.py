@@ -83,19 +83,35 @@ never phrase it as something you could do if asked.
 """
 
 
-def draft_response(ctx: "TurnContext") -> "Draft":  # type: ignore[name-defined]
-    """Draft the turn's reply plus its self-check claims from the ledger (LLM, temp 0)."""
+def draft_response(
+    ctx: "TurnContext",  # type: ignore[name-defined]
+    soft_feedback: list[str] | None = None,
+) -> "Draft":
+    """Draft the turn's reply plus its self-check claims from the ledger (LLM, temp 0).
+
+    If *soft_feedback* is provided (from a SOFT guard re-draft), the feedback
+    strings are appended as an extra constraint block so the model can correct
+    the flagged issues without the guard mutating the text directly.
+    """
     system = (
         _DRAFT_SYSTEM
         + "\n" + common.SEMANTIC_POLICY_OBLIGATIONS
         + "\n\n# Task context\n" + common.task_system_text(ctx.ledger)
     )
     transcript = common.render_transcript(ctx.ledger, include_tools=True)
+    feedback_block = ""
+    if soft_feedback:
+        feedback_block = (
+            "\n\n# Guard feedback (previous draft had issues — fix them)\n"
+            + "\n".join(f"- {fb}" for fb in soft_feedback)
+            + "\n"
+        )
     messages = [{
         "role": "user",
         "content": (
             f"# Conversation (tool calls/results included)\n{transcript}"
-            f"{common.render_policy_notes(ctx.policy_notes)}\n\n"
+            f"{common.render_policy_notes(ctx.policy_notes)}"
+            f"{feedback_block}\n\n"
             "Self-check your factual claims in `claims`, then write the assistant's "
             "spoken reply to the last user message, based strictly on the facts above."
         ),
