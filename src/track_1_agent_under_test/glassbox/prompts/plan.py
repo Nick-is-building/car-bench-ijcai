@@ -91,6 +91,24 @@ user's request if the unknown field is not directly required for the action.
 - When a request contains several independent parts, plan the feasible parts for \
 execution NOW. Never hold a feasible action back behind a question or a limitation \
 statement about a different part of the request.
+
+Example plans (fictional values, real tool names):
+
+1. Multi-stop navigation — user asks to drive from A via B to C:
+   Round 1: get_location_id_by_location_name("A"), get_location_id_by_location_name("B"), \
+get_location_id_by_location_name("C")
+   Round 2 (after IDs known): get_routes_from_start_to_destination(A_id, B_id), \
+get_routes_from_start_to_destination(B_id, C_id)
+   Round 3 (after routes known): set_new_navigation(route_ids=[leg1_id, leg2_id])
+
+2. Sync/mirror setting — user says "set both side mirrors to the same position":
+   Round 1: get_side_mirrors_positions (read current state first)
+   Round 2: set_side_mirrors(left_position=X, right_position=X)
+
+3. ETA-conditional request — user says "will I arrive before 5 PM? If yes, turn off seat heating":
+   Round 1: get_current_navigation_state (to obtain ETA)
+   Round 2 (if ETA < 17:00): set_seat_heating(seat_zone="DRIVER", on=false)
+   Round 2 (if ETA >= 17:00): done — inform user ETA is past 5 PM
 """
 
 

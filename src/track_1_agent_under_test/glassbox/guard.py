@@ -1018,3 +1018,100 @@ class FabricationGuard:
         if not any(w in draft_lower for w in _ROUTE_CHOICE_WORDS):
             return draft + " I've selected the fastest route."
         return draft
+
+
+# ---------------------------------------------------------------------------
+# G — Multi-Stop-Message-Enforcer (LLM-POL:022, Phase 2 §4.2)
+# ---------------------------------------------------------------------------
+
+_FASTEST_KEYWORDS = {"fastest", "quickest", "shortest time"}
+_ALTERNATIVES_KEYWORDS = {"alternative", "other route", "different route",
+                          "more information", "other option"}
+_TOLL_KEYWORDS = {"toll"}
+
+
+def enforce_multi_stop_message(draft: str, ledger: Ledger) -> str:
+    """Additively append missing LLM-POL:022 building blocks for multi-stop nav.
+
+    Trigger = pure state predicate: set_new_navigation with len(route_ids)>=2
+    has SUCCESS in the current turn's ledger. Checks three presence conditions;
+    appends only what's missing. Never removes or rewrites existing text.
+    Returns the draft unchanged if the trigger doesn't fire or all blocks present.
+    """
+    import json as _json
+
+    nav_call_args = None
+    nav_success = False
+    for e in ledger.entries:
+        if e.kind == "tool_call" and e.tool_name == "set_new_navigation":
+            try:
+                args = e.content if isinstance(e.content, dict) else _json.loads(e.content)
+                route_ids = args.get("route_ids", [])
+                if isinstance(route_ids, list) and len(route_ids) >= 2:
+                    nav_call_args = args
+            except (TypeError, _json.JSONDecodeError):
+                pass
+        if (e.kind == "tool_result" and e.tool_name == "set_new_navigation"
+                and nav_call_args is not None):
+            try:
+                result = e.content if isinstance(e.content, dict) else _json.loads(e.content)
+                if isinstance(result, dict) and result.get("status") == "SUCCESS":
+                    nav_success = True
+            except (TypeError, _json.JSONDecodeError):
+                pass
+
+    if not nav_success or nav_call_args is None:
+        return draft
+
+    route_ids = nav_call_args.get("route_ids", [])
+
+    draft_lower = draft.lower()
+    appends: list[str] = []
+
+    if not any(kw in draft_lower for kw in _FASTEST_KEYWORDS):
+        appends.append(
+            "I've selected the fastest route for each segment of your trip."
+        )
+
+    if not any(kw in draft_lower for kw in _ALTERNATIVES_KEYWORDS):
+        appends.append(
+            "Would you like more information on alternative routes?"
+        )
+
+    has_toll = _check_toll_on_selected_routes(route_ids, ledger)
+    if has_toll and not any(kw in draft_lower for kw in _TOLL_KEYWORDS):
+        appends.append(
+            "Please note that some segments of this route include toll roads."
+        )
+
+    if not appends:
+        return draft
+
+    return draft.rstrip() + " " + " ".join(appends)
+
+
+def _check_toll_on_selected_routes(
+    route_ids: list[str], ledger: Ledger
+) -> bool:
+    """Check if any selected route_id has includes_toll=True in ledger route data."""
+    import json as _json
+
+    route_id_set = set(route_ids)
+    for e in ledger.entries:
+        if e.kind != "tool_result" or e.tool_name != "get_routes_from_start_to_destination":
+            continue
+        try:
+            result = e.content if isinstance(e.content, dict) else _json.loads(e.content)
+            if not isinstance(result, dict) or result.get("status") != "SUCCESS":
+                continue
+            routes = result.get("result", [])
+            if not isinstance(routes, list):
+                continue
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                if route.get("id") in route_id_set and route.get("includes_toll"):
+                    return True
+        except (TypeError, _json.JSONDecodeError):
+            continue
+    return False

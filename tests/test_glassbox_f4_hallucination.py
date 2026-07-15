@@ -316,5 +316,81 @@ class Fix5AnnounceStallTest(unittest.TestCase):
         self.assertEqual(strip_action_promises(draft), draft)
 
 
+class MultiStopEnforcerTest(unittest.TestCase):
+    """G — Multi-Stop-Message-Enforcer (LLM-POL:022, Phase 2 §4.2)."""
+
+    def _ledger_with_multi_stop(self, route_ids, toll_routes=None):
+        """Build a ledger with get_routes + set_new_navigation SUCCESS."""
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Navigate from A via B to C.")
+        routes_result = {"status": "SUCCESS", "result": []}
+        for rid in route_ids:
+            route = {"id": rid, "includes_toll": rid in (toll_routes or set())}
+            routes_result["result"].append(route)
+        ledger.add_tool_call("get_routes_from_start_to_destination", {}, "c0")
+        ledger.add_tool_result("get_routes_from_start_to_destination",
+                               json.dumps(routes_result), "c0")
+        ledger.add_tool_call("set_new_navigation",
+                             {"route_ids": route_ids}, "c1")
+        ledger.add_tool_result("set_new_navigation",
+                               json.dumps({"status": "SUCCESS",
+                                           "result": {"navigation_set": True}}),
+                               "c1")
+        return ledger
+
+    def test_appends_all_missing_blocks(self):
+        from track_1_agent_under_test.glassbox.guard import enforce_multi_stop_message
+        ledger = self._ledger_with_multi_stop(["r1", "r2"])
+        draft = "Navigation is set!"
+        result = enforce_multi_stop_message(draft, ledger)
+        self.assertIn("fastest", result.lower())
+        self.assertIn("alternative", result.lower())
+        self.assertNotIn("toll", result.lower())
+
+    def test_no_change_when_all_present(self):
+        from track_1_agent_under_test.glassbox.guard import enforce_multi_stop_message
+        ledger = self._ledger_with_multi_stop(["r1", "r2"])
+        draft = ("I've selected the fastest route per segment. "
+                 "Would you like alternative routes? No toll roads on this trip.")
+        result = enforce_multi_stop_message(draft, ledger)
+        self.assertEqual(result, draft)
+
+    def test_no_trigger_for_single_stop(self):
+        from track_1_agent_under_test.glassbox.guard import enforce_multi_stop_message
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Navigate to B.")
+        ledger.add_tool_call("set_new_navigation", {"route_ids": ["r1"]}, "c1")
+        ledger.add_tool_result("set_new_navigation",
+                               json.dumps({"status": "SUCCESS",
+                                           "result": {"navigation_set": True}}),
+                               "c1")
+        draft = "Navigation is set!"
+        result = enforce_multi_stop_message(draft, ledger)
+        self.assertEqual(result, draft)
+
+    def test_toll_appended_only_when_flag_set(self):
+        from track_1_agent_under_test.glassbox.guard import enforce_multi_stop_message
+        ledger = self._ledger_with_multi_stop(["r1", "r2"], toll_routes={"r2"})
+        draft = "I've selected the fastest route. Would you like alternative routes?"
+        result = enforce_multi_stop_message(draft, ledger)
+        self.assertIn("toll", result.lower())
+
+    def test_no_trigger_without_success(self):
+        from track_1_agent_under_test.glassbox.guard import enforce_multi_stop_message
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Navigate from A via B to C.")
+        ledger.add_tool_call("set_new_navigation", {"route_ids": ["r1", "r2"]}, "c1")
+        ledger.add_tool_result("set_new_navigation",
+                               json.dumps({"status": "FAILURE",
+                                           "errors": {"msg": "nav active"}}),
+                               "c1")
+        draft = "Navigation is set!"
+        result = enforce_multi_stop_message(draft, ledger)
+        self.assertEqual(result, draft)
+
+
 if __name__ == "__main__":
     unittest.main()

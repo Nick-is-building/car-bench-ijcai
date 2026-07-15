@@ -938,6 +938,15 @@ class StateMachine:
                 reason="removed action-promise sentence(s) at turn end",
             ))
 
+        from .guard import enforce_multi_stop_message
+        before_enforcer = safe
+        safe = enforce_multi_stop_message(safe, ctx.ledger)
+        if safe != before_enforcer:
+            ctx.layer_decisions.append(GuardResult(
+                verdict="PASS", layer="MultiStopEnforcer.append",
+                reason="appended missing LLM-POL:022 building blocks",
+            ))
+
         ctx.transition(State.RESPOND)
         final = prompts.respond.finalize(safe, ctx)
         return self._finish(ctx, final)

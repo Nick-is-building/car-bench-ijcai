@@ -1,0 +1,41 @@
+# Phase 2 Mini-Verify — Few-Shot-Anker (F) + Multi-Stop-Enforcer (G)
+# 5 Tasks × 3 Trials = 15 Runs. Kostenschätzung ~$2-3.
+#
+# Akzeptanz: ≥2/3 Enforcer-Tasks auf 3/3; Wächter 3/3.
+#
+# Agent: claude-sonnet-4-6 (anthropic), Judge/User: gemini-2.5-flash.
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=glassbox AGENT_LLM=anthropic/claude-sonnet-4-6 \
+#      GLASSBOX_LOG_FILE=_local/runs/phase2_mini_agent.log \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_phase2_mini.toml \
+#      > _local/runs/phase2_mini.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 3
+task_split = "train"
+seed = 10
+max_steps = 50
+
+# Base: 3 Tasks (2 Enforcer + 1 Wächter)
+tasks_base_task_id_filter = [
+    "base_64", "base_88",
+    "base_0"
+]
+
+# Hallucination: 1 Task (Wächter)
+tasks_hallucination_task_id_filter = [
+    "hallucination_18"
+]
+
+# Disambiguation: 1 Task (Enforcer)
+tasks_disambiguation_task_id_filter = [
+    "disambiguation_48"
+]

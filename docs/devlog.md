@@ -4,6 +4,60 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-15 — Phase 2: Few-Shot-Anker + Multi-Stop-Enforcer (Finalplan §4)
+
+**F — Few-Shot-Anker (prompts/plan.py)**
+- 3 kompakte Beispiele am Ende von `_PLAN_SYSTEM` eingefügt:
+  1. Multi-Stop-Navigation (location lookups → routes → `set_new_navigation` mit 2 route_ids)
+  2. Sync/Mirror-Setting (Zustand lesen → beide Seiten setzen)
+  3. ETA-konditional (Navi-Zustand → bedingte Aktion)
+- Generisch: fiktive Werte, echte Tool-Namen. INTAKE-Prompt unverändert.
+- Ziel: Planner sieht Multi-Step-Pläne als Normalfall, nicht als Sonderfall.
+
+**G — Multi-Stop-Message-Enforcer (guard.py + state_machine.py)**
+- `enforce_multi_stop_message(draft, ledger)` in guard.py:
+  Trigger = `set_new_navigation` mit `len(route_ids) >= 2` UND SUCCESS im Ledger.
+  Prüft drei Keyword-Familien: `_FASTEST_KEYWORDS`, `_ALTERNATIVES_KEYWORDS`,
+  `_TOLL_KEYWORDS`. Fehlende Bausteine werden additiv angehängt (kein Rewrite).
+  Toll-Satz NUR wenn `includes_toll=True` in `get_routes_from_start_to_destination`-
+  Ergebnis für gewählte Route(n).
+- `_check_toll_on_selected_routes(ledger, route_ids)`: scannt Route-Daten nach
+  `includes_toll`-Feld für die selektierten route_ids.
+- Einbindung in `_verify_and_respond()` (state_machine.py): nach `strip_action_promises`,
+  vor `ctx.transition(State.RESPOND)`. `GuardResult` mit layer="MultiStopEnforcer.append"
+  wird bei Änderung protokolliert.
+
+**Bezug zu LLM-POL:022:** `ObligationNoteRule` in policies.py (bestehend, Zeile 1029)
+feuert für `len(route_ids) >= 2` und erzeugt Obligation-Note. Der Enforcer ergänzt
+den Mechanismus auf Message-Ebene — die Note sagt WAS fehlt, der Enforcer stellt
+sicher, dass es IM Text steht.
+
+**Tests:** 5 neue Tests in `MultiStopEnforcerTest` (test_glassbox_f4_hallucination.py):
+- `test_appends_all_missing_blocks`: Multi-Stop → fastest + alternatives angehängt
+- `test_no_change_when_all_present`: vollständiger Draft → byte-identisch
+- `test_no_trigger_for_single_stop`: route_ids=1 → kein Eingriff
+- `test_toll_appended_only_when_flag_set`: includes_toll=True → Toll-Satz
+- `test_no_trigger_without_success`: FAILURE → kein Eingriff
+
+**Suite:** 311 passed / 2 OI-010 pre-existing.
+
+### Phase 2 Mini-Verify — Hypothese (vor Lauf)
+
+**Szenario:** `local_phase2_mini.toml` — 5 Tasks × 3 Trials = 15 Runs.
+**Kostenschätzung:** ~$2-3 (Agent Sonnet-4-6, Judge/User gemini-2.5-flash).
+
+| Task | Klasse | Hypothese | Grund |
+|---|---|---|---|
+| base_64 (Enforcer) | Ziel | ≥2/3 | Multi-Stop, Few-Shot-Anker hilft Planner + Enforcer garantiert Bausteine |
+| base_88 (Enforcer) | Ziel | ≥2/3 | Multi-Stop, gleicher Mechanismus |
+| dis_48 (Enforcer) | Ziel | ≥2/3 | Disambiguation + Multi-Stop |
+| base_0 (Wächter) | Wächter | 3/3 | Stabil, keine Berührung |
+| hall_18 (Wächter) | Wächter | 3/3 | Stabil, keine Berührung |
+
+**Akzeptanz:** ≥2/3 Enforcer-Tasks auf 3/3; Wächter 3/3.
+
+---
+
 ## 2026-07-15 — Phase 1: Severity-Mechanismus + Regressionsheilung (Finalplan §3)
 
 **Architektur: SOFT re-draft loop (§3.1)**
