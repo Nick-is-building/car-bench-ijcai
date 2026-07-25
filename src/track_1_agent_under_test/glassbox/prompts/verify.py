@@ -23,11 +23,20 @@ class ClaimCheck(BaseModel):
     )
 
 
+class ActionClaim(BaseModel):
+    """One state-changing action claimed in the reply (RCL Stufe 7.5 self-check)."""
+    sentence: str = Field(description="The full sentence asserting the action outcome")
+    tool_expected: str = Field(
+        description="The tool name that should have been called with SUCCESS "
+                    "(e.g. 'close_sunroof', 'set_climate_temperature')")
+
+
 class Draft(BaseModel):
     # Forced self-check FIRST (Stufe 7): the model enumerates its factual claims with
     # their ledger sources before writing the reply. Parsed deterministically by the
     # Auditor — no separate audit LLM call. Empty for pure confirmations.
     claims: list[ClaimCheck] = Field(default_factory=list)
+    action_claims: list[ActionClaim] = Field(default_factory=list)
     response: str
 
 
@@ -76,6 +85,12 @@ as the actions performed.
 - SUCCESSFUL ACTIONS: If tool calls succeeded (status: SUCCESS), your reply MUST \
 acknowledge them. Never claim you cannot do something that the tool results show \
 was already done successfully.
+- ACTION CLAIMS: Before writing the reply, enumerate in `action_claims` every \
+sentence that asserts a completed state change (e.g. "I've closed the sunroof", \
+"The temperature is now set to 22°C"). For each, state the `tool_expected` — the \
+tool name whose SUCCESS result backs this claim. Only declare an action claim if \
+a matching tool call with status SUCCESS exists in the conversation. If no \
+state-changing action was performed, leave `action_claims` empty.
 - Never offer, propose, or ask permission to perform an action whose required tool \
 is not in the catalog (e.g. "should I go ahead and set X?"). If a requested \
 capability is unavailable, state that limitation plainly in the same message — \
@@ -112,8 +127,9 @@ def draft_response(
             f"# Conversation (tool calls/results included)\n{transcript}"
             f"{common.render_policy_notes(ctx.policy_notes)}"
             f"{feedback_block}\n\n"
-            "Self-check your factual claims in `claims`, then write the assistant's "
-            "spoken reply to the last user message, based strictly on the facts above."
+            "Self-check your factual claims in `claims` and action outcomes in "
+            "`action_claims`, then write the assistant's spoken reply to the last "
+            "user message, based strictly on the facts above."
         ),
     }]
     return llm.call_structured(messages, Draft, model=ctx.model, system=system)

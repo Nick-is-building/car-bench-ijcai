@@ -1,0 +1,27 @@
+# Pre-flight smoke for AGENT_CLASS=baseline (cold Sonnet 4.6 ablation).
+# 3 Tasks (1 base + 1 hall + 1 dis) x 1 Trial = 3 Runs.
+# Purpose: verify turn_metrics (prompt_tokens, completion_tokens, cost) are
+# emitted by the nackte Baseline before the full Subset L kaltlauf.
+#
+# Run: set -a && source .env && set +a && \
+#      AGENT_CLASS=baseline AGENT_LLM=anthropic/claude-sonnet-4-6 AGENT_TEMPERATURE=0.0 \
+#      nohup uv run car-bench-run scenarios/track_1_agent_under_test/local_baseline_smoke.toml \
+#      > _local/runs/baseline_smoke.log 2>&1 &
+
+[evaluator]
+endpoint = "http://127.0.0.1:8081"
+cmd = "python src/evaluator/server.py --host 127.0.0.1 --port 8081"
+
+[agent_under_test]
+endpoint = "http://127.0.0.1:8080"
+cmd = "python src/track_1_agent_under_test/server.py --host 127.0.0.1 --port 8080"
+
+[config]
+num_trials = 1
+task_split = "train"
+seed = 10
+max_steps = 50
+
+tasks_base_task_id_filter = ["base_0"]
+tasks_hallucination_task_id_filter = ["hallucination_0"]
+tasks_disambiguation_task_id_filter = ["disambiguation_0"]

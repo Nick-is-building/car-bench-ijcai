@@ -392,5 +392,138 @@ class MultiStopEnforcerTest(unittest.TestCase):
         self.assertEqual(result, draft)
 
 
+class RCLActionClaimTest(unittest.TestCase):
+    """RCL — Response-Coherence-Layer (Phase 3, Stufe 7.5)."""
+
+    def _ledger_with_success(self, tool_name, args=None, result=None):
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close the sunroof.")
+        ledger.add_tool_call(tool_name, args or {}, "c0")
+        ledger.add_tool_result(
+            tool_name,
+            json.dumps({"status": "SUCCESS", "result": result or {}}),
+            "c0",
+        )
+        return ledger
+
+    def test_legitimate_claim_passes(self):
+        from track_1_agent_under_test.glassbox.guard import check_action_claims
+        from track_1_agent_under_test.glassbox.prompts.verify import Draft, ActionClaim
+
+        ledger = self._ledger_with_success("close_sunroof")
+        draft = Draft(
+            claims=[],
+            action_claims=[
+                ActionClaim(
+                    sentence="I've closed the sunroof for you.",
+                    tool_expected="close_sunroof",
+                )
+            ],
+            response="I've closed the sunroof for you.",
+        )
+        findings = check_action_claims(draft, draft.response, ledger)
+        self.assertEqual(findings, [])
+
+    def test_fabricated_claim_detected(self):
+        from track_1_agent_under_test.glassbox.guard import check_action_claims
+        from track_1_agent_under_test.glassbox.prompts.verify import Draft, ActionClaim
+
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close the sunroof.")
+        draft = Draft(
+            claims=[],
+            action_claims=[
+                ActionClaim(
+                    sentence="I've closed the sunroof.",
+                    tool_expected="close_sunroof",
+                )
+            ],
+            response="I've closed the sunroof.",
+        )
+        findings = check_action_claims(draft, draft.response, ledger)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].tool_expected, "close_sunroof")
+
+    def test_entity_overlap_accepts_synonym_tool(self):
+        from track_1_agent_under_test.glassbox.guard import check_action_claims
+        from track_1_agent_under_test.glassbox.prompts.verify import Draft, ActionClaim
+
+        ledger = self._ledger_with_success("set_sunroof_position", {"position": 0})
+        draft = Draft(
+            claims=[],
+            action_claims=[
+                ActionClaim(
+                    sentence="The sunroof is now closed.",
+                    tool_expected="close_sunroof",
+                )
+            ],
+            response="The sunroof is now closed.",
+        )
+        findings = check_action_claims(draft, draft.response, ledger)
+        self.assertEqual(findings, [])
+
+    def test_replace_unsupported_claims(self):
+        from track_1_agent_under_test.glassbox.guard import (
+            replace_unsupported_action_claims, RCLFinding,
+        )
+        text = "I've closed the sunroof. The temperature is 22 degrees."
+        findings = [RCLFinding(
+            sentence="I've closed the sunroof.",
+            tool_expected="close_sunroof",
+            reason="no SUCCESS",
+        )]
+        result = replace_unsupported_action_claims(text, findings)
+        self.assertNotIn("closed the sunroof", result)
+        self.assertIn("close sunroof", result)
+        self.assertIn("22 degrees", result)
+
+    def test_empty_action_claims_passes(self):
+        from track_1_agent_under_test.glassbox.guard import check_action_claims
+        from track_1_agent_under_test.glassbox.prompts.verify import Draft
+
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("What's the weather?")
+        draft = Draft(claims=[], action_claims=[], response="It's sunny.")
+        findings = check_action_claims(draft, draft.response, ledger)
+        self.assertEqual(findings, [])
+
+    def test_undeclared_past_tense_claim_soft_detected(self):
+        from track_1_agent_under_test.glassbox.guard import detect_undeclared_action_claims
+
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Close the sunroof.")
+        text = "I've closed the sunroof for you."
+        finding = detect_undeclared_action_claims(text, ledger)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.layer, "RCL.undeclared")
+
+    def test_undeclared_claim_not_flagged_when_success_exists(self):
+        from track_1_agent_under_test.glassbox.guard import detect_undeclared_action_claims
+
+        ledger = self._ledger_with_success("close_sunroof")
+        text = "I've closed the sunroof for you."
+        finding = detect_undeclared_action_claims(text, ledger)
+        self.assertIsNone(finding)
+
+    def test_confirmation_request_not_flagged(self):
+        from track_1_agent_under_test.glassbox.guard import check_action_claims
+        from track_1_agent_under_test.glassbox.prompts.verify import Draft
+
+        ledger = Ledger()
+        ledger.add_system("You are a car assistant.")
+        ledger.add_user_turn("Turn on the high beams.")
+        draft = Draft(
+            claims=[],
+            action_claims=[],
+            response="Shall I turn on the high beams for you?",
+        )
+        findings = check_action_claims(draft, draft.response, ledger)
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main()

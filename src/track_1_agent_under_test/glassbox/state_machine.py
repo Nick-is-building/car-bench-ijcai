@@ -854,6 +854,8 @@ class StateMachine:
             FabricationGuard, GuardResult, inject_unknown_caveat,
             strip_action_promises, detect_action_promises,
             detect_inability_contradictions,
+            check_action_claims, replace_unsupported_action_claims,
+            detect_undeclared_action_claims,
         )
         from .auditor import Auditor
         from . import prompts
@@ -871,14 +873,16 @@ class StateMachine:
         has_open_confirmation = bool(getattr(ctx, "policy_violations", None))
 
         _MAX_SOFT_REDRAFTS = 2
+        _MAX_RCL_HARD_REDRAFTS = 2
         soft_feedback: list[str] | None = None
+        rcl_hard_round = 0
 
         for soft_round in range(_MAX_SOFT_REDRAFTS + 1):
             draft = prompts.verify.draft_response(ctx, soft_feedback=soft_feedback)
 
             audit = Auditor().pre_response_check(draft, ctx.ledger,
                                                   policy_notes=ctx.policy_notes)
-            if soft_round == 0:
+            if soft_round == 0 and rcl_hard_round == 0:
                 ctx.layer_decisions.append(GuardResult(
                     verdict="BLOCK" if not audit.passed else "PASS",
                     layer="Auditor.pre_response",
@@ -890,7 +894,7 @@ class StateMachine:
                                policy_notes=ctx.policy_notes,
                                catalog_tools=catalog_tools,
                                rc_tools=rc_tools)
-            if soft_round == 0:
+            if soft_round == 0 and rcl_hard_round == 0:
                 ctx.layer_decisions.append(GuardResult(
                     verdict="BLOCK" if safe != audit.safe_text else "PASS",
                     layer="FabricationGuard.C5",
@@ -898,6 +902,33 @@ class StateMachine:
                 ))
 
             safe = inject_unknown_caveat(safe, ctx.ledger, ctx.executed_signatures)
+
+            rcl_findings = check_action_claims(draft, safe, ctx.ledger)
+            if rcl_findings:
+                if rcl_hard_round < _MAX_RCL_HARD_REDRAFTS:
+                    rcl_hard_round += 1
+                    rcl_fb = (
+                        "Your draft claims actions that have no SUCCESS tool call: "
+                        + "; ".join(
+                            f"{f.tool_expected!r} ({f.sentence[:60]})"
+                            for f in rcl_findings
+                        )
+                        + ". Remove these claims or only report actions that actually succeeded."
+                    )
+                    soft_feedback = [rcl_fb]
+                    ctx.layer_decisions.append(GuardResult(
+                        verdict="BLOCK", layer="RCL.hard_redraft",
+                        reason=f"round {rcl_hard_round}: unsupported action claims",
+                        severity="HARD",
+                    ))
+                    continue
+                safe = replace_unsupported_action_claims(safe, rcl_findings)
+                ctx.layer_decisions.append(GuardResult(
+                    verdict="BLOCK", layer="RCL.replace",
+                    reason=f"replaced {len(rcl_findings)} unsupported claim(s) after "
+                           f"{_MAX_RCL_HARD_REDRAFTS} re-drafts",
+                    severity="HARD",
+                ))
 
             findings = []
             f = detect_action_promises(safe, ctx.ledger,
@@ -907,6 +938,9 @@ class StateMachine:
             f = detect_inability_contradictions(safe, ctx.ledger,
                                                 catalog_tools=catalog_tools,
                                                 rc_tools=rc_tools)
+            if f is not None:
+                findings.append(f)
+            f = detect_undeclared_action_claims(safe, ctx.ledger)
             if f is not None:
                 findings.append(f)
 

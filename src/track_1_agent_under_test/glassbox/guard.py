@@ -1115,3 +1115,122 @@ def _check_toll_on_selected_routes(
         except (TypeError, _json.JSONDecodeError):
             continue
     return False
+
+
+# ---------------------------------------------------------------------------
+# RCL — Response-Coherence-Layer (Phase 3, Stufe 7.5)
+# Checks that action claims in the response are backed by SUCCESS tool calls.
+# ---------------------------------------------------------------------------
+
+_PAST_TENSE_ACTION = re.compile(
+    r"\b("
+    r"i(?:'ve| have) (?:now )?(?:set|opened|closed|turned|activated|deactivated|"
+    r"adjusted|changed|started|stopped|sent|updated|switched|increased|decreased|"
+    r"lowered|raised|moved)\b|"
+    r"(?:the |your )?(?:\w+ )?(?:is|are|has been|have been) (?:now )?(?:set|opened|"
+    r"closed|turned|activated|deactivated|adjusted|changed|started|stopped|sent|"
+    r"updated|switched|increased|decreased|lowered|raised|moved)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class RCLFinding:
+    """An unsupported action claim detected by the RCL."""
+    sentence: str
+    tool_expected: str
+    reason: str
+
+
+def check_action_claims(
+    draft: "Draft",  # type: ignore[name-defined]
+    response_text: str,
+    ledger: Ledger,
+) -> list[RCLFinding]:
+    """Check declared action_claims against SUCCESS calls in the ledger.
+
+    Returns a list of findings for claims whose tool_expected has no SUCCESS
+    result, or whose entity tokens don't overlap with any SUCCESS call.
+    """
+    if not draft.action_claims:
+        return []
+    successful = _successful_tool_names(ledger)
+    findings: list[RCLFinding] = []
+    for ac in draft.action_claims:
+        tool = ac.tool_expected.strip()
+        if not tool:
+            continue
+        if tool in successful:
+            continue
+        tool_entities = set(_tool_entity_synonyms(tool))
+        entity_match = any(
+            tool_entities & set(_tool_entity_synonyms(s))
+            for s in successful
+        ) if tool_entities else False
+        if entity_match:
+            continue
+        findings.append(RCLFinding(
+            sentence=ac.sentence,
+            tool_expected=tool,
+            reason=f"tool {tool!r} has no SUCCESS result in ledger",
+        ))
+    return findings
+
+
+def replace_unsupported_action_claims(
+    text: str,
+    findings: list[RCLFinding],
+) -> str:
+    """Replace unsupported action-claim sentences with an honest template.
+
+    Called after 2 hard re-drafts failed to resolve the claims.
+    Only replaces the specific sentences; rest of text is untouched.
+    """
+    for f in findings:
+        if f.sentence and f.sentence in text:
+            honest = f"I wasn't able to complete that action ({f.tool_expected.replace('_', ' ')})."
+            text = text.replace(f.sentence, honest)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
+def detect_undeclared_action_claims(
+    draft_text: str,
+    ledger: Ledger,
+) -> SoftFinding | None:
+    """SOFT fallback: detect past-tense action claims not backed by SUCCESS calls.
+
+    Catches sentences the LLM didn't declare in action_claims but that assert
+    a completed state change. Only flags when the entity has no SUCCESS call.
+    """
+    successful = _successful_tool_names(ledger)
+    if not successful and not _PAST_TENSE_ACTION.search(draft_text):
+        return None
+    sentences = re.split(r"(?<=[.!?])\s+", draft_text)
+    flagged = []
+    for s in sentences:
+        if not _PAST_TENSE_ACTION.search(s):
+            continue
+        s_lower = s.lower()
+        entity_has_success = False
+        for tool in successful:
+            entity_words = _tool_entity_synonyms(tool)
+            if entity_words and any(w in s_lower for w in entity_words):
+                entity_has_success = True
+                break
+        if entity_has_success:
+            continue
+        flagged.append(s)
+    if not flagged:
+        return None
+    return SoftFinding(
+        layer="RCL.undeclared",
+        sentences=flagged,
+        feedback=(
+            "Your draft asserts completed actions that have no matching SUCCESS "
+            "tool call in the conversation. Remove or correct these sentences — "
+            "only report actions that actually succeeded: "
+            + "; ".join(repr(s[:80]) for s in flagged)
+        ),
+    )
