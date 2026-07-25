@@ -4,6 +4,74 @@ Datiertes Forschungs-Logbuch. Hypothese immer **vor** dem Lauf committen, Ergebn
 
 ---
 
+## 2026-07-23 — AUDIT-KORREKTUR: Opus-4.6-Baseline-Rotation + fehlende Einträge
+
+**Erstellt:** 2026-07-23 (Daten-Audit vor Report-Einreichung 26. Juli)
+**Geprüft von:** Claude Sonnet 4.6 (automated audit)
+**Methode:** Primärquellen-Verifikation gegen Result-JSONs, Handover 2026-07-14, devlog-interne Konsistenz.
+
+### Korrektur 1 — Opus-4.6-Baseline-Rotation (BESTÄTIGTER FEHLER)
+
+**Was war falsch:** An zwei Stellen in diesem Devlog (und in `paper/claims.md`) steht die Opus-4.6-Baseline in falscher Reihenfolge:
+- **Zeile ~340** (Generalprobe-Delta-Sektion, 2026-07-13): `Base 0.58, Hall 0.80, Dis 0.48, Overall 0.46` — FALSCH
+- **Zeile ~2633** (E2-Sektion, 2026-07-09): `Base 0.58 / Hall 0.80 / Dis 0.48 / Overall 0.46` — FALSCH
+- **`paper/claims.md`** Zeile 1: `0.58/0.80/0.48/0.46` — KORRIGIERT 2026-07-23
+
+**Was richtig ist:** Opus-4.6 Pass^3 — **Base 0.80, Hall 0.48, Dis 0.46, Overall 0.58**
+Quelle: Handover 2026-07-14 §1 ("Baseline Public Opus 4.6: 58 % Overall, 80/48/46 pro Split"), bestätigt durch devlog Zeile ~1861 ("Claude Opus 4.6 (vanilla): Gesamt=0.58, Base=0.80, Hallucination=0.48, Disambiguation=0.46").
+
+**Folge-Fehler (ebenfalls falsch, nicht nachgerechnet korrigieren):**
+- Zeile ~343: **"Wir schlagen die Opus-Baseline im Overall (+15pp) und in Base (+8pp)"** — DOPPELT FALSCH:
+  (a) Falsche Baseline-Zahlen: Gegen korrekten Opus-Overall 0.58 ergibt unser Combined-Overall 0.61 nur +3pp.
+  (b) Train/Test-Vergleich: Unsere 0.61 ist auf dem Train-Split, die Opus-Baseline auf dem (Hidden-)Leaderboard-Split. Der direkte Vergleich ist methodisch ungültig.
+  Korrekte Einordnung: Overall-Train +3pp (unklar ob signifikant), Base-Train −14pp (wir sind unter Opus), Hall-Train +19pp (stärkster Vorteil), Dis-Train −1pp (gleichauf).
+- `paper/claims.md` E2-Zeile: "Overall besser trotz schwächerem Modell" — FALSCH; E2-Overall 0.583 = Opus-Overall 0.58 (kein Vorteil, nur Gleichstand auf dem Train-Split).
+
+### Korrektur 2 — Phase-2-Mini-Verify-Ergebnis (FEHLENDER EINTRAG)
+
+**Was fehlt:** Das Phase-2-Mini-Verify (Lauf 20260715-042601) wurde nie in den Devlog eingetragen.
+**Primärquelle:** `output/track_1_agent_under_test/20260715-042601__...-local_phase2_mini__.json`
+
+| Task | Hypothese | Ergebnis |
+|---|---|---|
+| base_0 (Wächter) | 3/3 | **3/3 ✓** |
+| base_64 (Enforcer-Ziel) | ≥2/3 | **1/3 ✗** |
+| base_88 (Enforcer-Ziel) | ≥2/3 | **0/3 ✗** |
+| dis_48 (Enforcer-Ziel) | ≥2/3 | **0/3 ✗** |
+| hall_18 (Wächter) | 3/3 | **0/3 ✗ REGRESSION** |
+
+**Akzeptanz-Kriterien nicht erfüllt:** ≥2/3 Enforcer-Tasks auf 3/3 → 0/3 nicht erfüllt. Wächter 3/3 → hall_18 ist 0/3.
+**Konsequenz für Paper:** Phase 2 (Few-Shot + Multi-Stop-Enforcer) ist im HEAD aktiv aber nicht durch Mini-Verify abgesichert. Hall_18 zeigt eine mögliche Regression. Kein Rollback-Nachweis im Devlog.
+
+### Korrektur 3 — Kaltlauf-21.07.-Ergebnis (FEHLENDER EINTRAG)
+
+**Was fehlt:** Kaltlauf Subset-L vom 21. Juli (Lauf 20260721-061226) hat keinen Devlog-Eintrag.
+**Primärquelle:** `output/track_1_agent_under_test/20260721-061226__...-local_subset_L__.json`
+**Ergebnis (JSON-verifiziert):** 31/60 Pass^3 = **51.7%** overall
+- Base: 14/23 = 60.9%, Pass^2 = Pass^3 (strukturelle Fails bestätigt)
+- Hall: 8/20 = 40.0%, Pass^2 = Pass^3 (strukturelle Fails bestätigt)
+- Dis: 9/17 = 52.9% (gemischt)
+- dis_55: 86 A2A-Turns (35+27+24), Gesamtkosten $3.10
+
+**Metrik-Hinweis:** Der kommunizierte Wert "51.3%" ist der **Makro-Durchschnitt** (60.9+40.0+52.9)/3. Der task-gewichtete Wert ist **51.7% = 31/60**. Für das Paper: welcher Wert wird verwendet, muss explizit angegeben werden.
+
+### Korrektur 4 — Subset-L-Glassbox-Prozentzahl
+
+**Was kommuniziert wurde:** "~44,2% / 27 von 60"
+**Was stimmt:** 27/60 = **45.0%** (Handover §1, Zeile 47; JSON 20260714-051201 verifiziert)
+**44.2% ist der Makro-Durchschnitt** (56.5+35.0+41.2)/3 — nicht die task-gewichtete Rate.
+**Tabellen-Fehler im Handover:** Handover Zeile 40 sagt "59 Tasks" aber die Ergebnistabelle listet 23+20+17=60 Tasks. JSON bestätigt 60 Tasks × 3 Trials = 180 Runs.
+
+---
+
+## 2026-07-15 — Phase 2 Mini-Verify — Ergebnis (nachgetragen 2026-07-23)
+
+_(Lauf 20260715-042601, 5 Tasks × 3 Trials = 15 Runs; Daten aus output/track_1_agent_under_test/ — noch nicht nach docs/experiments/ kopiert)_
+
+**Akzeptanz-Kriterien NICHT erfüllt.** Kein Merge-Signal. Ergebnisse siehe AUDIT-KORREKTUR oben.
+
+---
+
 ## 2026-07-15 — Phase 2: Few-Shot-Anker + Multi-Stop-Enforcer (Finalplan §4)
 
 **F — Few-Shot-Anker (prompts/plan.py)**
